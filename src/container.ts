@@ -2,16 +2,20 @@ import type { Express } from 'express';
 
 import { loadEnv, type Env } from './config/env';
 import type { GameRepository } from './core/ports/game-repository.port';
+import type { RandomGenerator } from './core/ports/random-generator.port';
 import { GameService } from './core/services/game.service';
+import { PigGameService } from './core/services/pig-game.service';
 import { AsyncMutex } from './infrastructure/concurrency/async-mutex';
 import { UuidGenerator } from './infrastructure/id/uuid-generator';
 import { createLogger, type Logger } from './infrastructure/logging/logger';
 import { InMemoryGameRepository } from './infrastructure/persistence/in-memory-game.repository';
+import { InMemoryPigGameRepository } from './infrastructure/persistence/in-memory-pig-game.repository';
 import { CryptoRandomGenerator } from './infrastructure/random/crypto-random.generator';
 import { SystemClock } from './infrastructure/time/system-clock';
 import { createApp } from './http/app';
 import { GameController } from './http/controllers/game.controller';
 import { HealthController } from './http/controllers/health.controller';
+import { PigGameController } from './http/controllers/pig-game.controller';
 
 /** Injected at build time; falls back to the package version in development. */
 const SERVICE_VERSION = process.env.APP_VERSION ?? '1.0.0';
@@ -28,6 +32,11 @@ export interface ContainerOptions {
   /** Overrides for tests — supply a fixed clock, scripted RNG, etc. */
   readonly env?: Partial<Env>;
   readonly repository?: GameRepository;
+  /**
+   * RNG override so integration tests can script dice. The Pig rules branch on
+   * the rolled value, so deterministic end-to-end coverage needs this seam.
+   */
+  readonly random?: RandomGenerator;
 }
 
 /**
@@ -52,7 +61,8 @@ export function createContainer(options: ContainerOptions = {}): Container {
 
   // --- Infrastructure adapters -------------------------------------------
   const gameRepository = options.repository ?? new InMemoryGameRepository();
-  const random = new CryptoRandomGenerator();
+  const pigGameRepository = new InMemoryPigGameRepository();
+  const random = options.random ?? new CryptoRandomGenerator();
   const clock = new SystemClock();
   const idGenerator = new UuidGenerator();
   const lock = new AsyncMutex();
@@ -70,12 +80,20 @@ export function createContainer(options: ContainerOptions = {}): Container {
     },
   });
 
+  const pigGameService = new PigGameService({
+    repository: pigGameRepository,
+    random,
+    lock,
+    config: { targetScore: env.PIG_TARGET_SCORE },
+  });
+
   // --- Delivery layer ------------------------------------------------------
   // Readiness is owned here rather than by a module-level global so that tests
   // (and any future multi-instance embedding) get an isolated flag per app.
   let ready = true;
 
   const gameController = new GameController(gameService);
+  const pigGameController = new PigGameController(pigGameService);
   const healthController = new HealthController({
     clock,
     version: SERVICE_VERSION,
@@ -83,7 +101,7 @@ export function createContainer(options: ContainerOptions = {}): Container {
     isReady: () => ready,
   });
 
-  const app = createApp({ env, logger, gameController, healthController });
+  const app = createApp({ env, logger, gameController, pigGameController, healthController });
 
   return {
     env,

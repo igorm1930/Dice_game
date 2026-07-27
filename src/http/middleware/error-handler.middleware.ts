@@ -15,6 +15,7 @@ import { RequestValidationError } from './validate.middleware';
 const DOMAIN_CODE_TO_STATUS: Readonly<Record<string, number>> = {
   GAME_NOT_FOUND: 404,
   GAME_ALREADY_COMPLETED: 409,
+  PIG_GAME_OVER: 409,
   CONCURRENCY_CONFLICT: 409,
   INVALID_ROUND_COUNT: 422,
 };

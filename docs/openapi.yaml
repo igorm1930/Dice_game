@@ -23,6 +23,8 @@ tags:
   - name: Games
     description: Create games and play rounds
   - name: Leaderboard
+  - name: Pig Game
+    description: The shared two-player Pig game — backend is the sole rule authority
   - name: Health
     description: Infrastructure probes (unversioned, never rate limited)
 
@@ -171,6 +173,75 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/LeaderboardEntry' }
                   meta: { $ref: '#/components/schemas/Meta' }
+
+  /api/v1/pig-game:
+    get:
+      tags: [Pig Game]
+      summary: Current state of the shared Pig game
+      operationId: getPigGame
+      description: |
+        There is exactly one Pig game, shared by all clients — the UI is a pure
+        renderer of this state. The action endpoints below accept no request
+        body: every rule is applied server-side, so there is nothing a client
+        could legitimately send.
+      responses:
+        '200':
+          description: The shared game state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PigGameEnvelope' }
+
+  /api/v1/pig-game/roll:
+    post:
+      tags: [Pig Game]
+      summary: Roll the die
+      operationId: pigRoll
+      description: |
+        A 1 wipes the current turn score and switches the active player;
+        2–6 accumulate into the current turn score.
+      responses:
+        '200':
+          description: Updated game state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PigGameEnvelope' }
+        '409':
+          description: The game has already been won (`PIG_GAME_OVER`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/pig-game/hold:
+    post:
+      tags: [Pig Game]
+      summary: Bank the current turn score
+      operationId: pigHold
+      description: |
+        Adds the current turn score to the active player's total. Reaching
+        `targetScore` wins immediately; otherwise play switches.
+      responses:
+        '200':
+          description: Updated game state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PigGameEnvelope' }
+        '409':
+          description: The game has already been won (`PIG_GAME_OVER`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/pig-game/new-game:
+    post:
+      tags: [Pig Game]
+      summary: Reset to a fresh game
+      operationId: pigNewGame
+      responses:
+        '200':
+          description: The reset game state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PigGameEnvelope' }
 
   /healthz:
     get:
@@ -330,6 +401,39 @@ components:
           description: Correlates to every log line for this request.
         timestamp: { type: string, format: date-time }
 
+    PigGame:
+      type: object
+      required:
+        [totalScores, currentTurnScore, activePlayer, isPlaying, winner, lastRoll, targetScore]
+      properties:
+        totalScores:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: integer, minimum: 0 }
+          description: Banked totals for player 0 and player 1.
+        currentTurnScore: { type: integer, minimum: 0 }
+        activePlayer: { type: integer, enum: [0, 1] }
+        isPlaying: { type: boolean }
+        winner:
+          type: [integer, 'null']
+          enum: [0, 1, null]
+        lastRoll:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 6
+          description: Face of the last die rolled — the client renders, never computes, it.
+        targetScore:
+          type: integer
+          description: Total at which the active player wins (configured server-side).
+
+    PigGameEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: '#/components/schemas/PigGame' }
+        meta: { $ref: '#/components/schemas/Meta' }
+
     GameEnvelope:
       type: object
       required: [data, meta]
@@ -355,6 +459,7 @@ components:
                 - GAME_NOT_FOUND
                 - ROUTE_NOT_FOUND
                 - GAME_ALREADY_COMPLETED
+                - PIG_GAME_OVER
                 - CONCURRENCY_CONFLICT
                 - INVALID_ROUND_COUNT
                 - RATE_LIMIT_EXCEEDED

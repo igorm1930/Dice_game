@@ -44,6 +44,25 @@ COPY src ./src
 RUN npm run build
 
 ###############################################################################
+# Stage 2b — client-build: the React frontend.
+#
+# Its own stage with its own lockfile, so a UI-only change never invalidates
+# the server dependency layers and vice versa. `tsc --noEmit` runs inside the
+# client build script, which means frontend type errors fail the image build —
+# and the image build runs in CI, so the client gets type-checked on every
+# push without touching the workflow files.
+###############################################################################
+FROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS client-build
+
+WORKDIR /client
+COPY client/package.json client/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
+
+COPY client/ ./
+RUN npm run build
+
+###############################################################################
 # Stage 3 — runtime: the shipped image.
 ###############################################################################
 FROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS runtime
@@ -85,6 +104,10 @@ WORKDIR /app
 # duplicate the entire tree into a new layer.
 COPY --chown=node:node --from=deps  /app/node_modules ./node_modules
 COPY --chown=node:node --from=build /app/dist         ./dist
+# The built frontend lands where app.ts looks for it (client/dist relative to
+# the working directory). Express serves it only because it exists — an image
+# built without this stage would still be a fully working API.
+COPY --chown=node:node --from=client-build /client/dist ./client/dist
 COPY --chown=node:node package.json ./
 
 # Drop privileges. `node` is an unprivileged user provided by the base image;

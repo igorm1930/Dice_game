@@ -1,0 +1,7 @@
+# Build artifacts — formatting compiled output is noise, and checking it would
+# make format:check depend on whether a build has run.
+dist/
+coverage/
+client/dist/
+package-lock.json
+client/package-lock.json
