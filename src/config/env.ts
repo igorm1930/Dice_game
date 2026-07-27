@@ -33,6 +33,9 @@ const envSchema = z
 
     GAME_DEFAULT_ROUNDS: z.coerce.number().int().positive().default(5),
     GAME_MAX_ROUNDS: z.coerce.number().int().positive().default(20),
+
+    /** Total score at which a Pig game player wins. */
+    PIG_TARGET_SCORE: z.coerce.number().int().positive().default(20),
   })
   .refine((cfg) => cfg.GAME_DEFAULT_ROUNDS <= cfg.GAME_MAX_ROUNDS, {
     message: 'GAME_DEFAULT_ROUNDS must be less than or equal to GAME_MAX_ROUNDS',

@@ -4,7 +4,11 @@ import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'coverage/**', 'node_modules/**', '*.config.js'],
+    // client/ is its own TypeScript project (browser libs, JSX, bundler
+    // resolution) outside the server's projectService — its type safety is
+    // enforced by `tsc --noEmit` in the client build, which runs in the Docker
+    // stage CI already executes.
+    ignores: ['dist/**', 'coverage/**', 'node_modules/**', '*.config.js', 'client/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

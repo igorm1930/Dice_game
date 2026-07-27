@@ -128,6 +128,7 @@ describe('Architecture: layer boundaries', () => {
       const sources = await loadSources();
       const ADAPTERS = [
         'InMemoryGameRepository',
+        'InMemoryPigGameRepository',
         'CryptoRandomGenerator',
         'SystemClock',
         'UuidGenerator',

@@ -8,7 +8,7 @@ persistence is abstracted, how concurrency is handled, how failures surface, and
 how the thing gets built, verified, and deployed.
 
 ```
-209 tests · 99% statement coverage · 90% branch coverage · 0 lint errors
+248 tests · 99% statement coverage · 89% branch coverage · 0 lint errors
 ```
 
 ---
@@ -16,6 +16,7 @@ how the thing gets built, verified, and deployed.
 ## Table of contents
 
 - [Quick start](#quick-start)
+- [The Pig Game (full-stack)](#the-pig-game-full-stack)
 - [The guiding principle](#the-guiding-principle)
 - [Architecture](#architecture)
 - [Request lifecycle](#request-lifecycle)
@@ -61,6 +62,50 @@ curl -s -X POST "http://localhost:3000/api/v1/games/$ID/rolls" | jq '.data.round
 # Leaderboard
 curl -s http://localhost:3000/api/v1/leaderboard | jq
 ```
+
+---
+
+## The Pig Game (full-stack)
+
+The service also hosts a two-player, turn-based **Pig** dice game with a React
+frontend — added as a parallel vertical (own domain module, port, repository,
+service, controller) without touching a single existing game file, which is the
+ports architecture doing exactly what it promised.
+
+**Rules (enforced server-side only):** roll a die — a 1 wipes your turn score
+and passes play; 2–6 accumulate. HOLD banks the turn score; reach
+`PIG_TARGET_SCORE` (default 20) and you win. The action endpoints accept **no
+request body at all**: every rule lives in `PigGameService`, so there is
+nothing a modified client could send to cheat with. The UI is a pure renderer —
+it draws whatever `GET /api/v1/pig-game` returns (even the die face comes from
+the server's `lastRoll`) and posts bare actions.
+
+| Method | Endpoint                    | Meaning              |
+| ------ | --------------------------- | -------------------- |
+| `GET`  | `/api/v1/pig-game`          | Current shared state |
+| `POST` | `/api/v1/pig-game/roll`     | Roll the die         |
+| `POST` | `/api/v1/pig-game/hold`     | Bank the turn score  |
+| `POST` | `/api/v1/pig-game/new-game` | Reset                |
+
+Actions on a finished game return `409 PIG_GAME_OVER` — the UI disables its
+buttons, but the backend does not rely on that.
+
+```bash
+# Frontend development (two terminals)
+npm run dev                       # API on :3000
+cd client && npm ci && npm run dev   # UI on :5173, proxied to the API
+
+# Production composition — Express serves the built UI at /
+npm run build:client && npm run build && npm start   # open http://localhost:3000
+
+# Docker builds both automatically (multi-stage) — same one-liner as before
+docker compose up --build
+```
+
+The client build lands in `client/dist`; `createApp` serves it statically only
+when that directory exists, so API-only deployments and the test suite are
+untouched. Open the page in two tabs: both render the same server-owned match,
+which is the "backend as source of truth" property made visible.
 
 ---
 

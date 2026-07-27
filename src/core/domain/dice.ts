@@ -32,6 +32,13 @@ export function rollDice(random: RandomGenerator): DiceRoll {
   };
 }
 
+/**
+ * Rolls a single die — the Pig game's action unit.
+ */
+export function rollSingleDie(random: RandomGenerator): DieValue {
+  return nextDieValue(random);
+}
+
 function nextDieValue(random: RandomGenerator): DieValue {
   const value = random.nextInt(DIE_MIN_VALUE, DIE_MAX_VALUE);
 

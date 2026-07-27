@@ -1,6 +1,10 @@
 node_modules
 dist
 coverage
+# dockerignore patterns are root-relative (unlike gitignore), so the nested
+# client artifacts need their own entries — the image builds them fresh.
+client/node_modules
+client/dist
 .git
 .github
 .gitignore
