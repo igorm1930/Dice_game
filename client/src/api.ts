@@ -53,8 +53,22 @@ async function call(path: string, init?: RequestInit): Promise<PigGameState> {
 export const fetchState = (): Promise<PigGameState> => call('/api/v1/pig-game');
 export const roll = (): Promise<PigGameState> => call('/api/v1/pig-game/roll', { method: 'POST' });
 export const hold = (): Promise<PigGameState> => call('/api/v1/pig-game/hold', { method: 'POST' });
-export const newGame = (): Promise<PigGameState> =>
-  call('/api/v1/pig-game/new-game', { method: 'POST' });
+
+/**
+ * The one client input in the whole game: the target for the NEW match.
+ * Omitted → the server's default. The server validates; the UI only relays.
+ */
+export const newGame = (targetScore?: number): Promise<PigGameState> =>
+  call(
+    '/api/v1/pig-game/new-game',
+    targetScore === undefined
+      ? { method: 'POST' }
+      : {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetScore }),
+        },
+  );
 
 export function describeError(error: unknown): string {
   if (error instanceof ApiError) {

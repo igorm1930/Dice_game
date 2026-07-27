@@ -15,6 +15,8 @@ export default function App() {
   const [game, setGame] = useState<PigGameState | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Free text on purpose: the server is the validator; the UI only relays.
+  const [targetInput, setTargetInput] = useState('');
 
   // Monotonic action counter. A poll that started before an action must not
   // overwrite the action's fresher result, so each sync records the epoch it
@@ -96,13 +98,19 @@ export default function App() {
               showDie={game.isPlaying}
               canAct={game.isPlaying && !busy}
               busy={busy}
-              onNewGame={() => void dispatch(newGame)}
+              targetInput={targetInput}
+              targetPlaceholder={game.targetScore}
+              onTargetInputChange={setTargetInput}
+              onNewGame={() => {
+                const parsed = Number.parseInt(targetInput, 10);
+                void dispatch(() => newGame(Number.isNaN(parsed) ? undefined : parsed));
+              }}
               onRoll={() => void dispatch(roll)}
               onHold={() => void dispatch(hold)}
             />
           </div>
           <p className="text-sm font-medium text-cyan-900/70">
-            First to {game.targetScore} wins · rolling a 1 loses the turn
+            First to {game.targetScore} wins · rolling a 6 loses the turn
           </p>
         </>
       ) : (

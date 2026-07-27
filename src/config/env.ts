@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { PIG_MAX_TARGET_SCORE, PIG_MIN_TARGET_SCORE } from '../core/domain/pig-game';
+
 /**
  * Environment contract.
  *
@@ -34,8 +36,17 @@ const envSchema = z
     GAME_DEFAULT_ROUNDS: z.coerce.number().int().positive().default(5),
     GAME_MAX_ROUNDS: z.coerce.number().int().positive().default(20),
 
-    /** Total score at which a Pig game player wins. */
-    PIG_TARGET_SCORE: z.coerce.number().int().positive().default(20),
+    /**
+     * Pig game target used when NEW GAME does not name one. Bounded by the
+     * domain's playable range so a misconfigured default fails at boot rather
+     * than on the first reset.
+     */
+    PIG_TARGET_SCORE: z.coerce
+      .number()
+      .int()
+      .min(PIG_MIN_TARGET_SCORE)
+      .max(PIG_MAX_TARGET_SCORE)
+      .default(100),
   })
   .refine((cfg) => cfg.GAME_DEFAULT_ROUNDS <= cfg.GAME_MAX_ROUNDS, {
     message: 'GAME_DEFAULT_ROUNDS must be less than or equal to GAME_MAX_ROUNDS',

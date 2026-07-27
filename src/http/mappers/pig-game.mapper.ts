@@ -6,7 +6,7 @@ import type { PigGameResponse } from '../dto/pig-game.dto';
  * is an implementation detail of optimistic locking and never crosses this
  * boundary.
  */
-export function toPigGameResponse(state: PigGameState, targetScore: number): PigGameResponse {
+export function toPigGameResponse(state: PigGameState): PigGameResponse {
   return {
     totalScores: [state.totalScores[0], state.totalScores[1]],
     currentTurnScore: state.currentTurnScore,
@@ -14,6 +14,6 @@ export function toPigGameResponse(state: PigGameState, targetScore: number): Pig
     isPlaying: state.isPlaying,
     winner: state.winner,
     lastRoll: state.lastRoll,
-    targetScore,
+    targetScore: state.targetScore,
   };
 }

@@ -72,20 +72,22 @@ frontend — added as a parallel vertical (own domain module, port, repository,
 service, controller) without touching a single existing game file, which is the
 ports architecture doing exactly what it promised.
 
-**Rules (enforced server-side only):** roll a die — a 1 wipes your turn score
-and passes play; 2–6 accumulate. HOLD banks the turn score; reach
-`PIG_TARGET_SCORE` (default 20) and you win. The action endpoints accept **no
-request body at all**: every rule lives in `PigGameService`, so there is
-nothing a modified client could send to cheat with. The UI is a pure renderer —
-it draws whatever `GET /api/v1/pig-game` returns (even the die face comes from
-the server's `lastRoll`) and posts bare actions.
+**Rules (enforced server-side only):** roll a die — a **6 busts**, wiping your
+turn score and passing play; 1–5 accumulate. HOLD banks the turn score; first
+to the match's target wins. The target is chosen at NEW GAME (**default 100**,
+playable range 2–1000, `PIG_TARGET_SCORE` sets the default) and is frozen for
+the match. Roll and hold accept **no request body at all** — every in-match
+rule lives in `PigGameService`, so there is nothing a modified client could
+send to cheat with; the target is the single, validated setup input. The UI is
+a pure renderer — it draws whatever `GET /api/v1/pig-game` returns (even the
+die face comes from the server's `lastRoll`) and posts bare actions.
 
-| Method | Endpoint                    | Meaning              |
-| ------ | --------------------------- | -------------------- |
-| `GET`  | `/api/v1/pig-game`          | Current shared state |
-| `POST` | `/api/v1/pig-game/roll`     | Roll the die         |
-| `POST` | `/api/v1/pig-game/hold`     | Bank the turn score  |
-| `POST` | `/api/v1/pig-game/new-game` | Reset                |
+| Method | Endpoint                    | Meaning                                   |
+| ------ | --------------------------- | ----------------------------------------- |
+| `GET`  | `/api/v1/pig-game`          | Current shared state                      |
+| `POST` | `/api/v1/pig-game/roll`     | Roll the die                              |
+| `POST` | `/api/v1/pig-game/hold`     | Bank the turn score                       |
+| `POST` | `/api/v1/pig-game/new-game` | Reset — optional `{ "targetScore": 100 }` |
 
 Actions on a finished game return `409 PIG_GAME_OVER` — the UI disables its
 buttons, but the backend does not rely on that.

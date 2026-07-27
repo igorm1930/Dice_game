@@ -11,8 +11,8 @@ import type { RandomGenerator } from '../ports/random-generator.port';
 const LOCK_KEY = 'pig-game';
 
 export interface PigGameServiceConfig {
-  /** Total score at which the active player wins. */
-  readonly targetScore: number;
+  /** Target used when a new game does not specify one. */
+  readonly defaultTargetScore: number;
 }
 
 export interface PigGameServiceDependencies {
@@ -24,8 +24,9 @@ export interface PigGameServiceDependencies {
 
 /**
  * Application service for the Pig game — the single source of truth for the
- * rules. The client sends bare actions and renders whatever comes back;
- * nothing a client transmits can influence a score.
+ * rules. Roll and hold accept no client input at all; the only client-supplied
+ * value in the whole game is the target score at game creation, validated by
+ * the domain and frozen for the match.
  *
  * roll/hold/newGame are read-modify-write sequences spanning awaits, so they
  * run under the keyed lock with the repository's version guard as backstop —
@@ -44,10 +45,6 @@ export class PigGameService {
     this.config = dependencies.config;
   }
 
-  get targetScore(): number {
-    return this.config.targetScore;
-  }
-
   async getState(): Promise<PigGameState> {
     return this.repository.load();
   }
@@ -63,17 +60,17 @@ export class PigGameService {
   async hold(): Promise<PigGameState> {
     return this.lock.withLock(LOCK_KEY, async () => {
       const current = await this.repository.load();
-      const next = applyHold(current, this.config.targetScore);
-      return this.repository.save(next);
+      return this.repository.save(applyHold(current));
     });
   }
 
-  async newGame(): Promise<PigGameState> {
+  async newGame(targetScore?: number): Promise<PigGameState> {
     return this.lock.withLock(LOCK_KEY, async () => {
       // The fresh state carries the *current* version so the optimistic guard
       // still applies — a reset is a write like any other, not an exemption.
       const current = await this.repository.load();
-      return this.repository.save({ ...createPigGame(), version: current.version });
+      const fresh = createPigGame(targetScore ?? this.config.defaultTargetScore);
+      return this.repository.save({ ...fresh, version: current.version });
     });
   }
 }

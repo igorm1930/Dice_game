@@ -181,9 +181,10 @@ paths:
       operationId: getPigGame
       description: |
         There is exactly one Pig game, shared by all clients — the UI is a pure
-        renderer of this state. The action endpoints below accept no request
-        body: every rule is applied server-side, so there is nothing a client
-        could legitimately send.
+        renderer of this state. Roll and hold accept no request body: every
+        in-match rule is applied server-side, so there is nothing a client
+        could legitimately send. The one setup input is the target score at
+        NEW GAME, validated and frozen for the match.
       responses:
         '200':
           description: The shared game state
@@ -197,8 +198,8 @@ paths:
       summary: Roll the die
       operationId: pigRoll
       description: |
-        A 1 wipes the current turn score and switches the active player;
-        2–6 accumulate into the current turn score.
+        A 6 busts — the current turn score is wiped and the active player
+        switches; 1–5 accumulate into the current turn score.
       responses:
         '200':
           description: Updated game state
@@ -217,8 +218,8 @@ paths:
       summary: Bank the current turn score
       operationId: pigHold
       description: |
-        Adds the current turn score to the active player's total. Reaching
-        `targetScore` wins immediately; otherwise play switches.
+        Adds the current turn score to the active player's total. Reaching the
+        match's `targetScore` wins immediately; otherwise play switches.
       responses:
         '200':
           description: Updated game state
@@ -236,12 +237,39 @@ paths:
       tags: [Pig Game]
       summary: Reset to a fresh game
       operationId: pigNewGame
+      description: |
+        Optionally names the target score for the new match (playable range
+        2–1000; the server default applies when omitted). The target is frozen
+        for the match — it cannot be changed mid-game.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                targetScore:
+                  type: integer
+                  minimum: 2
+                  maximum: 1000
+                  description: Total at which the active player wins.
       responses:
         '200':
           description: The reset game state
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PigGameEnvelope' }
+        '400':
+          description: Malformed body
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422':
+          description: Well-formed but unplayable target (`INVALID_TARGET_SCORE`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   /healthz:
     get:
@@ -460,6 +488,7 @@ components:
                 - ROUTE_NOT_FOUND
                 - GAME_ALREADY_COMPLETED
                 - PIG_GAME_OVER
+                - INVALID_TARGET_SCORE
                 - CONCURRENCY_CONFLICT
                 - INVALID_ROUND_COUNT
                 - RATE_LIMIT_EXCEEDED
