@@ -220,32 +220,74 @@ jobs:
             sleep 5
           done
 
+          # Issues a request and fails loudly WITH the status and body.
+          #
+          # `curl -sf` was used here originally and was a mistake: it collapses
+          # every failure into exit code 22, discarding the response. A gate that
+          # fires without saying why costs more time than it saves — the service
+          # returns a structured error envelope with a code and a requestId, and
+          # that is exactly what an operator needs to see.
+          request() {
+            local method="$1" path="$2" expected="$3" data="${4:-}"
+            local response http_code body
+
+            if [ -n "$data" ]; then
+              response=$(curl -sS -X "$method" "${BASE_URL}${path}" \
+                -H 'Content-Type: application/json' \
+                -d "$data" -w '\n%{http_code}')
+            else
+              response=$(curl -sS -X "$method" "${BASE_URL}${path}" -w '\n%{http_code}')
+            fi
+
+            http_code=$(printf '%s' "$response" | tail -n1)
+            body=$(printf '%s' "$response" | sed '$d')
+
+            # Diagnostics go to stderr, never stdout. The caller captures stdout
+            # via $(...), so anything echoed there is swallowed into a variable
+            # instead of reaching the log — which would silently recreate the
+            # very blindness this function exists to remove.
+            if [ "$http_code" != "$expected" ]; then
+              {
+                echo "::error::${method} ${path} returned HTTP ${http_code}, expected ${expected}."
+                echo "Response body:"
+                echo "$body"
+              } >&2
+              return 1
+            fi
+
+            printf '%s' "$body"
+          }
+
           echo "Playing a full game against production..."
-          GAME_ID=$(curl -sf -X POST "${BASE_URL}/api/v1/games" \
-            -H 'Content-Type: application/json' \
-            -d '{"playerName":"Deploy Smoke Test","rounds":3}' \
-            | jq -r '.data.id')
+          CREATED=$(request POST /api/v1/games 201 \
+            '{"playerName":"Deploy Smoke Test","rounds":3}')
+          GAME_ID=$(printf '%s' "$CREATED" | jq -r '.data.id')
 
           if [ -z "$GAME_ID" ] || [ "$GAME_ID" = "null" ]; then
-            echo "::error::Failed to create a game."
+            echo "::error::Created a game but could not read its id from the response."
+            echo "$CREATED"
             exit 1
           fi
+          echo "Created game ${GAME_ID}."
 
-          for _ in 1 2 3; do
-            curl -sf -X POST "${BASE_URL}/api/v1/games/${GAME_ID}/rolls" > /dev/null
+          for round in 1 2 3; do
+            request POST "/api/v1/games/${GAME_ID}/rolls" 201 > /dev/null
+            echo "Played round ${round}."
           done
 
-          STATUS=$(curl -sf "${BASE_URL}/api/v1/games/${GAME_ID}" | jq -r '.data.status')
+          STATUS=$(request GET "/api/v1/games/${GAME_ID}" 200 | jq -r '.data.status')
           if [ "$STATUS" != "COMPLETED" ]; then
             echo "::error::Expected COMPLETED after 3 rounds, got ${STATUS}."
             exit 1
           fi
 
           # The 4th roll must be refused — proves domain rules survived the deploy.
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            -X POST "${BASE_URL}/api/v1/games/${GAME_ID}/rolls")
-          if [ "$CODE" != "409" ]; then
-            echo "::error::Expected 409 on a completed game, got ${CODE}."
+          # `request` expects 409 here, so a 201 (rules lost) fails the gate and
+          # prints the body that should not have existed.
+          REFUSED=$(request POST "/api/v1/games/${GAME_ID}/rolls" 409)
+          REFUSED_CODE=$(printf '%s' "$REFUSED" | jq -r '.error.code')
+          if [ "$REFUSED_CODE" != "GAME_ALREADY_COMPLETED" ]; then
+            echo "::error::Expected GAME_ALREADY_COMPLETED, got ${REFUSED_CODE}."
             exit 1
           fi
 
