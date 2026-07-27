@@ -27,8 +27,11 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
   NODE_VERSION: '22'
+  # The image name is deliberately NOT defined here. `github.repository`
+  # preserves the repository's casing, and an OCI reference must be lowercase —
+  # a raw env var invites exactly that bug. It is derived once, lowercased, in
+  # the "Normalise image name" step below.
 
 jobs:
   # The same gate as CI. A tag reaching the registry without passing this is a
@@ -77,11 +80,20 @@ jobs:
           # stored in repository secrets.
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # OCI image references must be lowercase, but `github.repository` preserves
+      # the repository's actual casing. docker/metadata-action lowercases
+      # internally, so its tags are valid — anything that builds a reference by
+      # hand (cosign, the digest we hand to the deploy job) must lowercase it
+      # explicitly or the reference is rejected as unparseable.
+      - name: Normalise image name
+        id: image
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Derive tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
@@ -110,9 +122,9 @@ jobs:
         id: resolve
         run: |
           if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+            echo "image=${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
           else
-            echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
+            echo "image=${{ env.REGISTRY }}/${{ steps.image.outputs.name }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
           fi
 
       # Only a freshly built image has a digest to sign. Re-deploying an
@@ -123,7 +135,7 @@ jobs:
 
       - name: Sign the image
         if: inputs.image_tag == ''
-        run: cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ steps.image.outputs.name }}@${{ steps.push.outputs.digest }}"
 
   deploy:
     name: Deploy to production
