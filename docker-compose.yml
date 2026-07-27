@@ -1,0 +1,53 @@
+# Local development and reviewer convenience: `docker compose up --build`.
+#
+# There is deliberately no database or cache service here. Adding one would
+# imply the application needs it; it does not (ADR-0001, ADR-0002).
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-local}
+    image: dice-game-service:local
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_PRETTY: 'false'
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-120}
+    restart: unless-stopped
+
+    # Give the app time to finish in-flight requests on SIGTERM. Must exceed the
+    # app's own SHUTDOWN_TIMEOUT_MS (10s) or Docker SIGKILLs mid-drain.
+    stop_grace_period: 15s
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+    # Defence in depth: even a compromised process cannot write outside /tmp or
+    # gain privileges beyond those it started with.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M

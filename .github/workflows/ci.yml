@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+# A new push to the same branch makes the in-flight run obsolete. Cancelling it
+# frees runners and gets feedback to the developer faster.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # Static analysis and tests run as one job: they share an npm install, and
+  # splitting them would cost more in setup than it saves in parallelism.
+  verify:
+    name: Lint, typecheck & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test with coverage
+        run: npm run test:ci
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7
+
+      - name: Build
+        run: npm run build
+
+  # Dependency review only works on pull_request events, so it is its own job
+  # rather than a step that would be skipped on push.
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fails the build on a high-severity advisory in a production dependency.
+      # Dev-only advisories are reported but not blocking — a vulnerability in a
+      # test runner is not a vulnerability in the shipped artifact.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Audit all dependencies (informational)
+        run: npm audit --audit-level=moderate || true
+
+  # Proves the image builds and the containerised app actually serves traffic.
+  # A Dockerfile that only compiles is not evidence of a working deployment.
+  docker:
+    name: Build & smoke-test image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: verify
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: dice-game-service:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            GIT_SHA=${{ github.sha }}
+
+      - name: Smoke test the running container
+        run: |
+          set -euo pipefail
+          docker run -d --name dice -p 3000:3000 dice-game-service:ci
+
+          echo "Waiting for readiness..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/readyz > /dev/null; then
+              echo "Ready after ${i} attempt(s)."
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Service never became ready."
+              docker logs dice
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo "Playing a full game through the public API..."
+          GAME_ID=$(curl -sf -X POST http://localhost:3000/api/v1/games \
+            -H 'Content-Type: application/json' \
+            -d '{"playerName":"CI Smoke Test","rounds":3}' \
+            | jq -r '.data.id')
+          test -n "$GAME_ID" && test "$GAME_ID" != "null"
+
+          for _ in 1 2 3; do
+            curl -sf -X POST "http://localhost:3000/api/v1/games/${GAME_ID}/rolls" > /dev/null
+          done
+
+          STATUS=$(curl -sf "http://localhost:3000/api/v1/games/${GAME_ID}" | jq -r '.data.status')
+          test "$STATUS" = "COMPLETED" || { echo "Expected COMPLETED, got ${STATUS}"; exit 1; }
+
+          # A 4th roll must be refused.
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST "http://localhost:3000/api/v1/games/${GAME_ID}/rolls")
+          test "$CODE" = "409" || { echo "Expected 409, got ${CODE}"; exit 1; }
+
+          echo "Verifying graceful shutdown honours SIGTERM..."
+          docker stop --timeout 15 dice
+          docker logs dice 2>&1 | grep -q "Drain complete" \
+            || { echo "Container did not drain cleanly."; docker logs dice; exit 1; }
+
+          echo "Smoke test passed."
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs dice || true
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f dice || true
