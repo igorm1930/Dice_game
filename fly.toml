@@ -51,6 +51,10 @@ kill_timeout = '15s'
   auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
+  # NOTE: min_machines_running is a floor, not a cap, and machine COUNT is not
+  # a fly.toml setting at all — flyctl's first deploy creates an HA pair by
+  # default, which for this app is a split-brain (two disjoint in-memory
+  # games). deploy.yml enforces `flyctl scale count 1` on every rollout.
 
   # Readiness. Fly stops routing to a machine whose check fails, which is what
   # makes the SIGTERM drain in src/server.ts lossless: /readyz flips to 503

@@ -191,8 +191,21 @@ jobs:
 
           echo "Deploying image: ${{ needs.build-and-push.outputs.image }}"
 
+          # ADR-0001 requires EXACTLY ONE machine: with in-memory state a
+          # second machine is not redundancy but a split-brain. Run #6 proved
+          # it in production — the smoke test's requests alternated between two
+          # machines holding disjoint games (GAME_NOT_FOUND on all three flow
+          # attempts, 40s+ after cutover), because flyctl's first deploy had
+          # created an HA *pair* by default and min_machines_running does not
+          # cap the count. Machine count is not a fly.toml setting, so the
+          # invariant is enforced here: scale first (so a stray extra machine
+          # is gone before the rollout), then deploy with --ha=false so no
+          # pair is ever recreated.
+          flyctl scale count 1 --yes
+
           flyctl deploy \
             --image "${{ needs.build-and-push.outputs.image }}" \
+            --ha=false \
             --strategy rolling \
             --wait-timeout 300 \
             --verbose
