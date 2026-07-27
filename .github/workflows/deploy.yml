@@ -27,8 +27,11 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
   NODE_VERSION: '22'
+  # The image name is deliberately NOT defined here. `github.repository`
+  # preserves the repository's casing, and an OCI reference must be lowercase —
+  # a raw env var invites exactly that bug. It is derived once, lowercased, in
+  # the "Normalise image name" step below.
 
 jobs:
   # The same gate as CI. A tag reaching the registry without passing this is a
@@ -77,11 +80,20 @@ jobs:
           # stored in repository secrets.
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # OCI image references must be lowercase, but `github.repository` preserves
+      # the repository's actual casing. docker/metadata-action lowercases
+      # internally, so its tags are valid — anything that builds a reference by
+      # hand (cosign, the digest we hand to the deploy job) must lowercase it
+      # explicitly or the reference is rejected as unparseable.
+      - name: Normalise image name
+        id: image
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Derive tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
@@ -110,9 +122,9 @@ jobs:
         id: resolve
         run: |
           if [ -n "${{ inputs.image_tag }}" ]; then
-            echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+            echo "image=${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
           else
-            echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
+            echo "image=${{ env.REGISTRY }}/${{ steps.image.outputs.name }}@${{ steps.push.outputs.digest }}" >> "$GITHUB_OUTPUT"
           fi
 
       # Only a freshly built image has a digest to sign. Re-deploying an
@@ -123,7 +135,7 @@ jobs:
 
       - name: Sign the image
         if: inputs.image_tag == ''
-        run: cosign sign --yes "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
+        run: cosign sign --yes "${{ env.REGISTRY }}/${{ steps.image.outputs.name }}@${{ steps.push.outputs.digest }}"
 
   deploy:
     name: Deploy to production
@@ -141,51 +153,103 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
       # ---------------------------------------------------------------------
-      # Target-specific rollout.
+      # Rollout.
       #
-      # Left as an explicit placeholder rather than a guess: the correct command
-      # depends on infrastructure not specified by this assignment. Each option
-      # below is a drop-in replacement.
+      # Deploys the exact image built and signed above, addressed by immutable
+      # digest — nothing is rebuilt on the deploy host, so what ships is
+      # bit-identical to what CI verified.
       #
-      #   Kubernetes:
-      #     kubectl set image deployment/dice-game-service \
-      #       api=${{ needs.build-and-push.outputs.image }} -n production
-      #     kubectl rollout status deployment/dice-game-service -n production --timeout=5m
+      # `--strategy rolling` waits on the readiness check declared in fly.toml
+      # before considering the machine healthy. Combined with the SIGTERM drain
+      # in src/server.ts (readiness fails first, then the server stops
+      # accepting), that is what makes the cutover lossless.
       #
-      #   AWS ECS:
-      #     aws ecs update-service --cluster prod --service dice-game \
-      #       --force-new-deployment --task-definition "$TASK_DEF"
+      # Note: with a single machine — required while state is in-memory, see
+      # ADR-0001 — a rolling deploy still has a brief gap while the replacement
+      # comes up, and in-progress games are lost. That is an accepted, recorded
+      # consequence of the persistence decision, not an oversight. Swapping the
+      # repository for a shared store removes both limitations.
       #
-      #   Fly.io:
-      #     flyctl deploy --image ${{ needs.build-and-push.outputs.image }}
-      #
-      # Whichever is used, the rollout must be a *rolling* one that waits on the
-      # readiness probe. The app's SIGTERM drain (see server.ts) is what makes
-      # that lossless: readiness fails first, the load balancer stops routing,
-      # then in-flight requests finish before the process exits.
+      # Other targets, should this move: `kubectl set image ... && kubectl
+      # rollout status`, or `aws ecs update-service --force-new-deployment`.
       # ---------------------------------------------------------------------
       - name: Roll out
-        run: |
-          echo "Deploying image: ${{ needs.build-and-push.outputs.image }}"
-          echo "::warning::No deployment target configured — wire up the rollout command in deploy.yml."
-
-      - name: Post-deploy smoke test
-        if: vars.PRODUCTION_URL != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           set -euo pipefail
-          echo "Verifying ${{ vars.PRODUCTION_URL }} is serving..."
 
+          if [ -z "${FLY_API_TOKEN:-}" ]; then
+            echo "::error::FLY_API_TOKEN is not set on the 'production' environment."
+            echo "Create it with: fly tokens create deploy -a dice-game-service"
+            exit 1
+          fi
+
+          echo "Deploying image: ${{ needs.build-and-push.outputs.image }}"
+
+          flyctl deploy \
+            --image "${{ needs.build-and-push.outputs.image }}" \
+            --strategy rolling \
+            --wait-timeout 300 \
+            --verbose
+
+      # A readiness poll only proves the process booted. This plays a real game
+      # against production so the deploy is verified end to end, and fails the
+      # job — surfacing the rollback instruction below — if it does not.
+      - name: Post-deploy smoke test
+        if: vars.PRODUCTION_URL != ''
+        env:
+          BASE_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          set -euo pipefail
+
+          echo "Waiting for ${BASE_URL} to report ready..."
           for i in $(seq 1 30); do
-            if curl -sf "${{ vars.PRODUCTION_URL }}/readyz" > /dev/null; then
-              echo "Service is ready."
-              exit 0
+            if curl -sf "${BASE_URL}/readyz" > /dev/null; then
+              echo "Ready after ${i} attempt(s)."
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "::error::Service did not become ready within 150s."
+              exit 1
             fi
             sleep 5
           done
 
-          echo "Service did not become ready after deploy."
-          exit 1
+          echo "Playing a full game against production..."
+          GAME_ID=$(curl -sf -X POST "${BASE_URL}/api/v1/games" \
+            -H 'Content-Type: application/json' \
+            -d '{"playerName":"Deploy Smoke Test","rounds":3}' \
+            | jq -r '.data.id')
+
+          if [ -z "$GAME_ID" ] || [ "$GAME_ID" = "null" ]; then
+            echo "::error::Failed to create a game."
+            exit 1
+          fi
+
+          for _ in 1 2 3; do
+            curl -sf -X POST "${BASE_URL}/api/v1/games/${GAME_ID}/rolls" > /dev/null
+          done
+
+          STATUS=$(curl -sf "${BASE_URL}/api/v1/games/${GAME_ID}" | jq -r '.data.status')
+          if [ "$STATUS" != "COMPLETED" ]; then
+            echo "::error::Expected COMPLETED after 3 rounds, got ${STATUS}."
+            exit 1
+          fi
+
+          # The 4th roll must be refused — proves domain rules survived the deploy.
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST "${BASE_URL}/api/v1/games/${GAME_ID}/rolls")
+          if [ "$CODE" != "409" ]; then
+            echo "::error::Expected 409 on a completed game, got ${CODE}."
+            exit 1
+          fi
+
+          echo "Production smoke test passed."
 
       # A deploy that cannot prove it succeeded should not be recorded as one.
       - name: Report outcome

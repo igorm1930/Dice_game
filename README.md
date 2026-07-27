@@ -554,20 +554,30 @@ assert the 4th roll returns 409, and verify SIGTERM produces a clean drain. A
 Dockerfile that merely compiles is not evidence of a working deployment.
 
 **`deploy.yml`** — re-verify, build, push to GHCR with provenance + SBOM, sign
-with cosign, then roll out.
+with cosign, deploy to **Fly.io**, then play a real game against production and
+fail the job if it doesn't finish correctly.
 
-Two choices worth noting:
+Four choices worth noting:
 
 - **Deploy by immutable digest, never by tag.** `:latest` can move between the
   decision to deploy and the rollout; a digest cannot. This makes rollback exact.
 - **`cancel-in-progress: false`** on deploy. Aborting a half-finished deploy
   leaves the environment in an unknown state. That setting is right for CI and
   actively dangerous here.
+- **Nothing is rebuilt on the deploy host.** `flyctl deploy --image <digest>`
+  ships the exact artifact CI verified, bit for bit.
+- **The post-deploy check plays a game**, not just a readiness poll. A `/readyz`
+  200 proves the process booted; it does not prove the app works. The check
+  creates a game, plays it to completion, and asserts the next roll returns 409.
 
-The rollout command itself is an explicit placeholder — the correct one depends
-on infrastructure this assignment doesn't specify. `deploy.yml` documents the
-drop-in for Kubernetes, ECS, and Fly.io. Manual re-dispatch with a previous SHA
-is the rollback path.
+Platform settings that carry real weight — `kill_timeout` above the app's drain
+budget, auto-stop disabled because state is in-memory, `TRUST_PROXY_HOPS=1` so
+rate limiting keys on the client rather than Fly's proxy — are documented with
+their failure modes in [`fly.toml`](fly.toml) and the
+**[deployment runbook](docs/deployment.md)**, which also covers first-time setup,
+rollback, and troubleshooting.
+
+Rollback is a workflow re-dispatch with `image_tag` set to a previous SHA.
 
 ---
 
