@@ -3,6 +3,13 @@ import { DomainError } from './errors';
 
 export type PigPlayer = 0 | 1;
 
+/** The die face that ends a turn and wipes its score. */
+export const PIG_BUST_DIE: DieValue = 6;
+
+/** Bounds for a playable target score. */
+export const PIG_MIN_TARGET_SCORE = 2;
+export const PIG_MAX_TARGET_SCORE = 1000;
+
 /**
  * The Pig game state.
  *
@@ -24,6 +31,12 @@ export interface PigGameState {
    * renders it without computing anything — the die image is data, not logic.
    */
   readonly lastRoll: DieValue | null;
+  /**
+   * Total at which the active player wins. Chosen when the game is created and
+   * immutable for its duration — game *setup* is the one legitimate client
+   * input, and it can never change the rules of a match already in progress.
+   */
+  readonly targetScore: number;
   /** Optimistic concurrency token, incremented by the repository on write. */
   readonly version: number;
 }
@@ -45,11 +58,31 @@ export class PigGameOverError extends DomainError {
   }
 }
 
+/** Raised when a new game is requested with an unplayable target score. */
+export class InvalidTargetScoreError extends DomainError {
+  readonly code = 'INVALID_TARGET_SCORE';
+
+  constructor(requested: number) {
+    super(
+      `Target score ${String(requested)} must be an integer between ${String(PIG_MIN_TARGET_SCORE)} and ${String(PIG_MAX_TARGET_SCORE)}.`,
+      { requested, min: PIG_MIN_TARGET_SCORE, max: PIG_MAX_TARGET_SCORE },
+    );
+  }
+}
+
 function otherPlayer(player: PigPlayer): PigPlayer {
   return player === 0 ? 1 : 0;
 }
 
-export function createPigGame(): PigGameState {
+export function createPigGame(targetScore: number): PigGameState {
+  if (
+    !Number.isInteger(targetScore) ||
+    targetScore < PIG_MIN_TARGET_SCORE ||
+    targetScore > PIG_MAX_TARGET_SCORE
+  ) {
+    throw new InvalidTargetScoreError(targetScore);
+  }
+
   return Object.freeze({
     totalScores: Object.freeze<[number, number]>([0, 0]),
     currentTurnScore: 0,
@@ -57,6 +90,7 @@ export function createPigGame(): PigGameState {
     isPlaying: true,
     winner: null,
     lastRoll: null,
+    targetScore,
     version: 0,
   });
 }
@@ -64,8 +98,10 @@ export function createPigGame(): PigGameState {
 /**
  * Applies one die roll.
  *
- *  - 1: the turn is lost — currentTurnScore resets and play switches.
- *  - 2–6: the pips join the current turn score.
+ *  - A 6 busts: the current turn score is wiped and play switches. (Merely
+ *    switching without the wipe would hand the pending points to the opponent,
+ *    which makes no sense.)
+ *  - 1–5 accumulate into the current turn score.
  *
  * @throws {PigGameOverError} if the game has already been won.
  */
@@ -74,7 +110,7 @@ export function applyRoll(state: PigGameState, die: DieValue): PigGameState {
     throw new PigGameOverError('roll', state.winner);
   }
 
-  if (die === 1) {
+  if (die === PIG_BUST_DIE) {
     return Object.freeze({
       ...state,
       currentTurnScore: 0,
@@ -93,13 +129,12 @@ export function applyRoll(state: PigGameState, die: DieValue): PigGameState {
 /**
  * Banks the current turn score into the active player's total.
  *
- * Reaching `targetScore` wins immediately; otherwise play switches. Holding
- * with a zero turn score is legal (it merely forfeits the turn) — classic Pig
- * allows it, and forbidding it would add a rule the spec does not contain.
+ * Reaching the game's target score wins immediately; otherwise play switches.
+ * Holding with a zero turn score is legal (it merely forfeits the turn).
  *
  * @throws {PigGameOverError} if the game has already been won.
  */
-export function applyHold(state: PigGameState, targetScore: number): PigGameState {
+export function applyHold(state: PigGameState): PigGameState {
   if (!state.isPlaying) {
     throw new PigGameOverError('hold', state.winner);
   }
@@ -107,7 +142,7 @@ export function applyHold(state: PigGameState, targetScore: number): PigGameStat
   const totals: [number, number] = [state.totalScores[0], state.totalScores[1]];
   totals[state.activePlayer] += state.currentTurnScore;
 
-  const hasWon = totals[state.activePlayer] >= targetScore;
+  const hasWon = totals[state.activePlayer] >= state.targetScore;
 
   return Object.freeze({
     ...state,

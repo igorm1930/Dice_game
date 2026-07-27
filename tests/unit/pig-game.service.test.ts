@@ -1,20 +1,26 @@
 import { ConcurrencyConflictError } from '../../src/core/domain/errors';
-import { PigGameOverError } from '../../src/core/domain/pig-game';
+import {
+  InvalidTargetScoreError,
+  PigGameOverError,
+  createPigGame,
+} from '../../src/core/domain/pig-game';
 import { PigGameService } from '../../src/core/services/pig-game.service';
 import { AsyncMutex } from '../../src/infrastructure/concurrency/async-mutex';
 import { InMemoryPigGameRepository } from '../../src/infrastructure/persistence/in-memory-pig-game.repository';
 import { ScriptedRandomGenerator } from '../support/fakes';
 
+const DEFAULT_TARGET = 20;
+
 function buildService(sequence: readonly number[] = [4]): {
   service: PigGameService;
   repository: InMemoryPigGameRepository;
 } {
-  const repository = new InMemoryPigGameRepository();
+  const repository = new InMemoryPigGameRepository(createPigGame(DEFAULT_TARGET));
   const service = new PigGameService({
     repository,
     random: new ScriptedRandomGenerator(sequence),
     lock: new AsyncMutex(),
-    config: { targetScore: 20 },
+    config: { defaultTargetScore: DEFAULT_TARGET },
   });
   return { service, repository };
 }
@@ -27,6 +33,7 @@ describe('PigGameService', () => {
       totalScores: [0, 0],
       activePlayer: 0,
       isPlaying: true,
+      targetScore: DEFAULT_TARGET,
     });
   });
 
@@ -40,8 +47,8 @@ describe('PigGameService', () => {
     expect(state.version).toBe(1);
   });
 
-  it('rolling a 1 hands play to the other player', async () => {
-    const { service } = buildService([6, 1]);
+  it('rolling a 6 busts and hands play to the other player', async () => {
+    const { service } = buildService([5, 6]);
 
     await service.roll();
     const state = await service.roll();
@@ -51,42 +58,41 @@ describe('PigGameService', () => {
   });
 
   it('hold banks and switches; reaching the target wins', async () => {
-    const { service } = buildService([6, 6, 6, 6]);
+    // Scripted 5s cycle: each turn banks 10 after two rolls.
+    const { service } = buildService([5]);
 
     await service.roll();
     await service.roll();
-    const mid = await service.hold(); // banks 12 -> still playing
-    expect(mid).toMatchObject({ totalScores: [12, 0], activePlayer: 1, isPlaying: true });
-
-    // Player 1 busts immediately? No — scripted sequence cycles 6s, so roll
-    // twice and hold to bank 12 for player 1 as well.
-    await service.roll();
-    await service.roll();
-    const p1 = await service.hold();
-    expect(p1).toMatchObject({ totalScores: [12, 12], activePlayer: 0 });
+    const mid = await service.hold(); // P0 banks 10 -> still playing
+    expect(mid).toMatchObject({ totalScores: [10, 0], activePlayer: 1, isPlaying: true });
 
     await service.roll();
     await service.roll();
-    const finished = await service.hold(); // 12 + 12 = 24 >= 20 -> win
+    const p1 = await service.hold(); // P1 banks 10
+    expect(p1).toMatchObject({ totalScores: [10, 10], activePlayer: 0 });
+
+    await service.roll();
+    await service.roll();
+    const finished = await service.hold(); // 10 + 10 = 20 >= 20 -> win
 
     expect(finished.isPlaying).toBe(false);
     expect(finished.winner).toBe(0);
-    expect(finished.totalScores).toEqual([24, 12]);
+    expect(finished.totalScores).toEqual([20, 10]);
   });
 
   it('rejects actions once the game is over', async () => {
-    const { service } = buildService([6, 6, 6, 6]);
+    const { service } = buildService([5]);
     for (let i = 0; i < 4; i += 1) {
       await service.roll();
     }
-    await service.hold();
+    await service.hold(); // banks 20 -> win
 
     await expect(service.roll()).rejects.toThrow(PigGameOverError);
     await expect(service.hold()).rejects.toThrow(PigGameOverError);
   });
 
-  it('newGame resets play and is always allowed', async () => {
-    const { service } = buildService([6, 6, 6, 6]);
+  it('newGame resets play using the default target', async () => {
+    const { service } = buildService([5]);
     for (let i = 0; i < 4; i += 1) {
       await service.roll();
     }
@@ -101,9 +107,30 @@ describe('PigGameService', () => {
       isPlaying: true,
       winner: null,
       lastRoll: null,
+      targetScore: DEFAULT_TARGET,
     });
     // The reset is a guarded write like any other; history keeps advancing.
     expect(fresh.version).toBe(6);
+  });
+
+  it('newGame honours a chosen target for the whole match', async () => {
+    const { service } = buildService([5]);
+
+    const fresh = await service.newGame(10);
+    expect(fresh.targetScore).toBe(10);
+
+    await service.roll();
+    await service.roll();
+    const finished = await service.hold(); // 10 >= 10 -> win at the chosen target
+
+    expect(finished.winner).toBe(0);
+  });
+
+  it('rejects an unplayable target with a domain error', async () => {
+    const { service } = buildService();
+
+    await expect(service.newGame(1)).rejects.toThrow(InvalidTargetScoreError);
+    await expect(service.newGame(5000)).rejects.toThrow(InvalidTargetScoreError);
   });
 
   /**

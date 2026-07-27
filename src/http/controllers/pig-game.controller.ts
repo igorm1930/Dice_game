@@ -2,8 +2,9 @@ import type { Request, Response } from 'express';
 
 import type { PigGameService } from '../../core/services/pig-game.service';
 import type { SuccessResponse } from '../dto/api-response';
-import type { PigGameResponse } from '../dto/pig-game.dto';
+import type { NewPigGameBody, PigGameResponse } from '../dto/pig-game.dto';
 import { toPigGameResponse } from '../mappers/pig-game.mapper';
+import { validated } from '../middleware/validate.middleware';
 
 /**
  * HTTP adapter for the Pig game.
@@ -18,22 +19,23 @@ export class PigGameController {
 
   getState = async (req: Request, res: Response): Promise<void> => {
     const state = await this.pigGameService.getState();
-    res.status(200).json(this.ok(req, toPigGameResponse(state, this.pigGameService.targetScore)));
+    res.status(200).json(this.ok(req, toPigGameResponse(state)));
   };
 
   roll = async (req: Request, res: Response): Promise<void> => {
     const state = await this.pigGameService.roll();
-    res.status(200).json(this.ok(req, toPigGameResponse(state, this.pigGameService.targetScore)));
+    res.status(200).json(this.ok(req, toPigGameResponse(state)));
   };
 
   hold = async (req: Request, res: Response): Promise<void> => {
     const state = await this.pigGameService.hold();
-    res.status(200).json(this.ok(req, toPigGameResponse(state, this.pigGameService.targetScore)));
+    res.status(200).json(this.ok(req, toPigGameResponse(state)));
   };
 
   newGame = async (req: Request, res: Response): Promise<void> => {
-    const state = await this.pigGameService.newGame();
-    res.status(200).json(this.ok(req, toPigGameResponse(state, this.pigGameService.targetScore)));
+    const body = validated<NewPigGameBody>(req, 'body');
+    const state = await this.pigGameService.newGame(body.targetScore);
+    res.status(200).json(this.ok(req, toPigGameResponse(state)));
   };
 
   private ok(req: Request, data: PigGameResponse): SuccessResponse<PigGameResponse> {

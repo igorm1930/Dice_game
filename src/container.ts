@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 
 import { loadEnv, type Env } from './config/env';
+import { createPigGame } from './core/domain/pig-game';
 import type { GameRepository } from './core/ports/game-repository.port';
 import type { RandomGenerator } from './core/ports/random-generator.port';
 import { GameService } from './core/services/game.service';
@@ -61,7 +62,7 @@ export function createContainer(options: ContainerOptions = {}): Container {
 
   // --- Infrastructure adapters -------------------------------------------
   const gameRepository = options.repository ?? new InMemoryGameRepository();
-  const pigGameRepository = new InMemoryPigGameRepository();
+  const pigGameRepository = new InMemoryPigGameRepository(createPigGame(env.PIG_TARGET_SCORE));
   const random = options.random ?? new CryptoRandomGenerator();
   const clock = new SystemClock();
   const idGenerator = new UuidGenerator();
@@ -84,7 +85,7 @@ export function createContainer(options: ContainerOptions = {}): Container {
     repository: pigGameRepository,
     random,
     lock,
-    config: { targetScore: env.PIG_TARGET_SCORE },
+    config: { defaultTargetScore: env.PIG_TARGET_SCORE },
   });
 
   // --- Delivery layer ------------------------------------------------------
