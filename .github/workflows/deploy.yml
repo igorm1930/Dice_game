@@ -300,40 +300,70 @@ jobs:
             printf '%s' "$body"
           }
 
-          echo "Playing a full game against production..."
-          CREATED=$(request POST /api/v1/games 201 \
-            '{"playerName":"Deploy Smoke Test","rounds":3}')
-          GAME_ID=$(printf '%s' "$CREATED" | jq -r '.data.id')
+          # The full game flow as one verifiable unit.
+          #
+          # Every `request` gets an explicit `|| return 1`: called inside an
+          # `if` condition, bash suppresses `set -e` for the whole function
+          # body, so without these a failed step would silently fall through.
+          run_flow() {
+            local created game_id status refused refused_code round
 
-          if [ -z "$GAME_ID" ] || [ "$GAME_ID" = "null" ]; then
-            echo "::error::Created a game but could not read its id from the response."
-            echo "$CREATED"
-            exit 1
-          fi
-          echo "Created game ${GAME_ID}."
+            created=$(request POST /api/v1/games 201 \
+              '{"playerName":"Deploy Smoke Test","rounds":3}') || return 1
+            game_id=$(printf '%s' "$created" | jq -r '.data.id')
 
-          for round in 1 2 3; do
-            request POST "/api/v1/games/${GAME_ID}/rolls" 201 > /dev/null
-            echo "Played round ${round}."
+            if [ -z "$game_id" ] || [ "$game_id" = "null" ]; then
+              echo "::error::Created a game but could not read its id from the response." >&2
+              echo "$created" >&2
+              return 1
+            fi
+            echo "Created game ${game_id}."
+
+            for round in 1 2 3; do
+              request POST "/api/v1/games/${game_id}/rolls" 201 > /dev/null || return 1
+              echo "Played round ${round}."
+            done
+
+            status=$(request GET "/api/v1/games/${game_id}" 200 | jq -r '.data.status') || return 1
+            if [ "$status" != "COMPLETED" ]; then
+              echo "::error::Expected COMPLETED after 3 rounds, got ${status}." >&2
+              return 1
+            fi
+
+            # The 4th roll must be refused — proves domain rules survived the
+            # deploy. `request` expects 409, so a 201 (rules lost) fails loudly.
+            refused=$(request POST "/api/v1/games/${game_id}/rolls" 409) || return 1
+            refused_code=$(printf '%s' "$refused" | jq -r '.error.code')
+            if [ "$refused_code" != "GAME_ALREADY_COMPLETED" ]; then
+              echo "::error::Expected GAME_ALREADY_COMPLETED, got ${refused_code}." >&2
+              return 1
+            fi
+          }
+
+          # The flow retries as a WHOLE, not per request. Run #5 showed why:
+          # a game was created (201) and vanished 180ms later (404) — the two
+          # requests straddled the outgoing and incoming machines during the
+          # cutover overlap, each holding disjoint in-memory state (the
+          # documented cost of ADR-0001). No single-request retry can fix a
+          # flow split across two backends, and retrying a 404 would mask real
+          # bugs. Instead the whole sequence gets fresh, loudly-diagnosed
+          # attempts; once the old machine is reaped (seconds), a clean run
+          # verifies the steady state. Three straight full-flow failures is a
+          # real defect and fails the deploy.
+          for flow_attempt in 1 2 3; do
+            echo "--- smoke flow attempt ${flow_attempt}/3 ---"
+            if run_flow; then
+              echo "Production smoke test passed."
+              exit 0
+            fi
+            if [ "$flow_attempt" -lt 3 ]; then
+              echo "Flow attempt ${flow_attempt} failed — expected during the brief post-cutover instance overlap; retrying in 20s..."
+              sleep 20
+            fi
           done
 
-          STATUS=$(request GET "/api/v1/games/${GAME_ID}" 200 | jq -r '.data.status')
-          if [ "$STATUS" != "COMPLETED" ]; then
-            echo "::error::Expected COMPLETED after 3 rounds, got ${STATUS}."
-            exit 1
-          fi
-
-          # The 4th roll must be refused — proves domain rules survived the deploy.
-          # `request` expects 409 here, so a 201 (rules lost) fails the gate and
-          # prints the body that should not have existed.
-          REFUSED=$(request POST "/api/v1/games/${GAME_ID}/rolls" 409)
-          REFUSED_CODE=$(printf '%s' "$REFUSED" | jq -r '.error.code')
-          if [ "$REFUSED_CODE" != "GAME_ALREADY_COMPLETED" ]; then
-            echo "::error::Expected GAME_ALREADY_COMPLETED, got ${REFUSED_CODE}."
-            exit 1
-          fi
-
-          echo "Production smoke test passed."
+          echo "::error::Smoke test failed on 3 consecutive full-flow attempts — this is a real defect, not cutover noise."
+          exit 1
 
       # A deploy that cannot prove it succeeded should not be recorded as one.
       - name: Report outcome

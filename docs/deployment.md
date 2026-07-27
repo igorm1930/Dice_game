@@ -166,15 +166,16 @@ cosign verify ghcr.io/igorm1930/dice_game@<digest> \
 
 ## Troubleshooting
 
-| Symptom                                           | Cause                                                                 | Fix                                                                   |
-| ------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `unauthorized` / `manifest unknown` during deploy | GHCR package is private                                               | Step 2 above                                                          |
-| `FLY_API_TOKEN is not set`                        | Secret missing on the `production` environment                        | Step 4                                                                |
-| Deploy succeeds, smoke test skipped               | `PRODUCTION_URL` variable unset                                       | Step 4                                                                |
-| Machine restarts in a loop                        | Config rejected at boot — the app fails fast on invalid env by design | `fly logs`; the first line names the offending variable               |
-| Health check failing but the app looks fine       | Check hitting the wrong port                                          | `internal_port` must equal `PORT` (3000)                              |
-| Rate limiting throttles everyone at once          | `TRUST_PROXY_HOPS` not set to 1                                       | Already in `fly.toml`; confirm it was not overridden by `fly secrets` |
-| Games vanish between requests                     | More than one machine running                                         | `fly scale count 1` — see the single-replica note above               |
+| Symptom                                                                   | Cause                                                                                                                        | Fix                                                                                                               |
+| ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `unauthorized` / `manifest unknown` during deploy                         | GHCR package is private                                                                                                      | Step 2 above                                                                                                      |
+| `FLY_API_TOKEN is not set`                                                | Secret missing on the `production` environment                                                                               | Step 4                                                                                                            |
+| Deploy succeeds, smoke test skipped                                       | `PRODUCTION_URL` variable unset                                                                                              | Step 4                                                                                                            |
+| Machine restarts in a loop                                                | Config rejected at boot — the app fails fast on invalid env by design                                                        | `fly logs`; the first line names the offending variable                                                           |
+| Health check failing but the app looks fine                               | Check hitting the wrong port                                                                                                 | `internal_port` must equal `PORT` (3000)                                                                          |
+| Rate limiting throttles everyone at once                                  | `TRUST_PROXY_HOPS` not set to 1                                                                                              | Already in `fly.toml`; confirm it was not overridden by `fly secrets`                                             |
+| Games vanish between requests                                             | More than one machine running                                                                                                | `fly scale count 1` — see the single-replica note above                                                           |
+| Smoke test fails once with `GAME_NOT_FOUND` mid-flow right after a deploy | The flow straddled the outgoing and incoming machines during the brief cutover overlap — each holds disjoint in-memory state | Expected; the smoke test retries the whole flow (3 attempts, 20s apart). Three straight failures is a real defect |
 
 Logs:
 
