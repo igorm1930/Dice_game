@@ -13,12 +13,22 @@ import { RequestValidationError } from './validate.middleware';
  * greppable in one file instead of scattered across controllers.
  */
 const DOMAIN_CODE_TO_STATUS: Readonly<Record<string, number>> = {
+  // 401 — no usable credential. Distinct from 403: the caller is unknown.
+  UNAUTHENTICATED: 401,
+  INVALID_CREDENTIALS: 401,
+  // 403 — the caller is known and simply may not do this.
+  NOT_A_PARTICIPANT: 403,
+  NOT_YOUR_TURN: 403,
   GAME_NOT_FOUND: 404,
+  PIG_GAME_NOT_FOUND: 404,
+  USER_NOT_FOUND: 404,
   GAME_ALREADY_COMPLETED: 409,
   PIG_GAME_OVER: 409,
   CONCURRENCY_CONFLICT: 409,
+  USERNAME_TAKEN: 409,
   INVALID_ROUND_COUNT: 422,
   INVALID_TARGET_SCORE: 422,
+  INVALID_OPPONENT: 422,
 };
 
 const DEFAULT_DOMAIN_STATUS = 400;

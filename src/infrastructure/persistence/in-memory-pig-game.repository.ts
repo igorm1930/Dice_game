@@ -8,27 +8,27 @@ const AGGREGATE_ID = 'pig-game';
 /**
  * In-memory adapter for {@link PigGameRepository}.
  *
- * Holds exactly one state, seeded by the composition root so `load()` never
- * has a missing-state branch — and so the repository knows nothing about game
- * configuration. The two properties that legitimise the other in-memory
- * repository apply here too: snapshot isolation on every boundary crossing,
- * and version-guarded writes (see ADR-0001, ADR-0004).
+ * Holds at most one match — the table is empty until two authenticated players
+ * sit down. The two properties that legitimise the other in-memory repository
+ * apply here too: snapshot isolation on every boundary crossing, and
+ * version-guarded writes (see ADR-0001, ADR-0004).
  */
 export class InMemoryPigGameRepository implements PigGameRepository {
-  private state: PigGameState;
+  private state: PigGameState | null = null;
 
-  constructor(initial: PigGameState) {
-    this.state = structuredClone(initial);
-  }
-
-  load(): Promise<PigGameState> {
-    return Promise.resolve(structuredClone(this.state));
+  load(): Promise<PigGameState | null> {
+    return Promise.resolve(this.state === null ? null : structuredClone(this.state));
   }
 
   save(next: PigGameState): Promise<PigGameState> {
-    if (next.version !== this.state.version) {
+    // The first match of the process is written against version 0, which is
+    // exactly what `createPigGame` produces — so a fresh table needs no
+    // special case, and a *second* concurrent "new game" still conflicts.
+    const currentVersion = this.state?.version ?? 0;
+
+    if (next.version !== currentVersion) {
       return Promise.reject(
-        new ConcurrencyConflictError(AGGREGATE_ID, next.version, this.state.version),
+        new ConcurrencyConflictError(AGGREGATE_ID, next.version, currentVersion),
       );
     }
 

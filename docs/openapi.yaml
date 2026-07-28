@@ -20,11 +20,13 @@ servers:
     description: Local development
 
 tags:
+  - name: Auth
+    description: Registration, login, and the bearer credential every game action needs
+  - name: Pig Game
+    description: The two-player Pig game — the backend is the sole rule and turn authority
   - name: Games
     description: Create games and play rounds
   - name: Leaderboard
-  - name: Pig Game
-    description: The shared two-player Pig game — backend is the sole rule authority
   - name: Health
     description: Infrastructure probes (unversioned, never rate limited)
 
@@ -174,38 +176,148 @@ paths:
                     items: { $ref: '#/components/schemas/LeaderboardEntry' }
                   meta: { $ref: '#/components/schemas/Meta' }
 
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a player
+      operationId: register
+      description: |
+        Creates a player and returns a bearer token in the same response, so a
+        new player is immediately able to play. Passwords are hashed with scrypt
+        and never echoed (ADR-0007).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '201':
+          description: Player created and signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: Username already registered (`USERNAME_TAKEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Exchange credentials for a token
+      operationId: login
+      description: |
+        A wrong password and an unknown username return an identical body and
+        take the same time — the endpoint is deliberately not an account
+        enumeration oracle. Credential endpoints carry their own, much tighter
+        rate limit than the gameplay routes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Credentials' }
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionEnvelope' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current token
+      operationId: logout
+      security:
+        - bearerAuth: []
+      description: |
+        Sessions are server-side, so logout is a real revocation rather than a
+        client-side forget (ADR-0007).
+      responses:
+        '204': { description: Token revoked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/auth/me:
+    get:
+      tags: [Auth]
+      summary: Identify the bearer
+      operationId: me
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: The authenticated player
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { $ref: '#/components/schemas/Player' }
+                  meta: { $ref: '#/components/schemas/Meta' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /api/v1/pig-game:
     get:
       tags: [Pig Game]
       summary: Current state of the shared Pig game
       operationId: getPigGame
+      security:
+        - bearerAuth: []
       description: |
-        There is exactly one Pig game, shared by all clients — the UI is a pure
-        renderer of this state. Roll and hold accept no request body: every
-        in-match rule is applied server-side, so there is nothing a client
-        could legitimately send. The one setup input is the target score at
-        NEW GAME, validated and frozen for the match.
+        There is exactly one Pig match, shared by every client — the UI is a pure
+        renderer of this state. `viewerSeat` tells the caller which seat, if any,
+        they occupy.
+
+        Roll and hold accept no request body at all: every in-match rule is
+        applied server-side and the actor is the bearer of the credential, so
+        there is nothing a client could legitimately send. The only setup input
+        is the opponent and the winning score at NEW GAME.
       responses:
         '200':
           description: The shared game state
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PigGameEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: No match has been started yet (`PIG_GAME_NOT_FOUND`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   /api/v1/pig-game/roll:
     post:
       tags: [Pig Game]
-      summary: Roll the die
+      summary: Throw both dice
       operationId: pigRoll
+      security:
+        - bearerAuth: []
       description: |
-        A 6 busts — the current turn score is wiped and the active player
-        switches; 1–5 accumulate into the current turn score.
+        Throws two dice. **6 & 6** busts — the round score is lost and the turn
+        passes. Any other throw adds the sum of both dice to the round score and
+        the same player may roll again. A single six is an ordinary six.
+
+        Only the player whose turn it is may roll; anyone else gets a 403.
       responses:
         '200':
           description: Updated game state
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PigGameEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No match has been started yet (`PIG_GAME_NOT_FOUND`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: The game has already been won (`PIG_GAME_OVER`)
           content:
@@ -215,17 +327,28 @@ paths:
   /api/v1/pig-game/hold:
     post:
       tags: [Pig Game]
-      summary: Bank the current turn score
+      summary: Bank the round score
       operationId: pigHold
+      security:
+        - bearerAuth: []
       description: |
-        Adds the current turn score to the active player's total. Reaching the
-        match's `targetScore` wins immediately; otherwise play switches.
+        Adds the round score to the active player's global score. Reaching the
+        match's `targetScore` wins immediately and increments that player's win
+        counter; otherwise the turn passes. Holding on zero is legal and simply
+        forfeits the turn.
       responses:
         '200':
           description: Updated game state
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PigGameEnvelope' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: No match has been started yet (`PIG_GAME_NOT_FOUND`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '409':
           description: The game has already been won (`PIG_GAME_OVER`)
           content:
@@ -235,38 +358,54 @@ paths:
   /api/v1/pig-game/new-game:
     post:
       tags: [Pig Game]
-      summary: Reset to a fresh game
+      summary: Start a fresh match
       operationId: pigNewGame
+      security:
+        - bearerAuth: []
       description: |
-        Optionally names the target score for the new match (playable range
-        2–1000; the server default applies when omitted). The target is frozen
-        for the match — it cannot be changed mid-game.
+        Seats the caller opposite the named opponent, who must be a registered
+        player. Any authenticated player may start a new game at any time,
+        including while one is in progress.
+
+        The winning score is optional (playable range 2–1000; the server default
+        applies when omitted) and is frozen for the match — it cannot be changed
+        mid-game.
       requestBody:
-        required: false
+        required: true
         content:
           application/json:
             schema:
               type: object
               additionalProperties: false
+              required: [opponent]
               properties:
+                opponent:
+                  type: string
+                  description: Username of the registered player to sit opposite.
+                  examples: ['bob']
                 targetScore:
                   type: integer
                   minimum: 2
                   maximum: 1000
-                  description: Total at which the active player wins.
+                  description: Global score at which a player wins. Defaults to 100.
       responses:
-        '200':
-          description: The reset game state
+        '201':
+          description: The new match
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PigGameEnvelope' }
-        '400':
-          description: Malformed body
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: No such opponent (`USER_NOT_FOUND`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '422':
-          description: Well-formed but unplayable target (`INVALID_TARGET_SCORE`)
+          description: |
+            Well-formed but unplayable — an out-of-range winning score
+            (`INVALID_TARGET_SCORE`) or a player naming themselves
+            (`INVALID_OPPONENT`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -429,31 +568,105 @@ components:
           description: Correlates to every log line for this request.
         timestamp: { type: string, format: date-time }
 
+    Player:
+      type: object
+      required: [id, username, wins]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        wins:
+          type: integer
+          minimum: 0
+          description: How many games this player has won.
+
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 24
+          pattern: '^[A-Za-z0-9_-]+$'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+
+    Session:
+      type: object
+      required: [player, token]
+      properties:
+        player: { $ref: '#/components/schemas/Player' }
+        token:
+          type: string
+          description: |
+            Opaque bearer credential. Send as `Authorization: Bearer <token>`.
+
+    SessionEnvelope:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { $ref: '#/components/schemas/Session' }
+        meta: { $ref: '#/components/schemas/Meta' }
+
     PigGame:
       type: object
       required:
-        [totalScores, currentTurnScore, activePlayer, isPlaying, winner, lastRoll, targetScore]
+        [
+          players,
+          totalScores,
+          currentTurnScore,
+          activePlayer,
+          isPlaying,
+          winner,
+          lastRoll,
+          bustedOnLastRoll,
+          targetScore,
+          viewerSeat,
+        ]
       properties:
+        players:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { $ref: '#/components/schemas/Player' }
+          description: The two seated players, index-aligned with `totalScores`.
         totalScores:
           type: array
           minItems: 2
           maxItems: 2
           items: { type: integer, minimum: 0 }
-          description: Banked totals for player 0 and player 1.
-        currentTurnScore: { type: integer, minimum: 0 }
+          description: Banked global scores for seat 0 and seat 1.
+        currentTurnScore:
+          type: integer
+          minimum: 0
+          description: The active player's unbanked round score.
         activePlayer: { type: integer, enum: [0, 1] }
         isPlaying: { type: boolean }
         winner:
           type: [integer, 'null']
           enum: [0, 1, null]
         lastRoll:
-          type: [integer, 'null']
-          minimum: 1
-          maximum: 6
-          description: Face of the last die rolled — the client renders, never computes, it.
+          type: ['array', 'null']
+          minItems: 2
+          maxItems: 2
+          items: { type: integer, minimum: 1, maximum: 6 }
+          description: Both faces of the last throw — the client renders, never computes, them.
+        bustedOnLastRoll:
+          type: boolean
+          description: |
+            Whether that throw was a double six. Derived server-side so the
+            client can show the "round lost" moment without re-deciding what a
+            bust is.
         targetScore:
           type: integer
-          description: Total at which the active player wins (configured server-side).
+          description: Global score at which a player wins. Frozen for the match.
+        viewerSeat:
+          type: [integer, 'null']
+          enum: [0, 1, null]
+          description: Which seat the calling player occupies, or null if watching.
 
     PigGameEnvelope:
       type: object
@@ -484,13 +697,21 @@ components:
                 - VALIDATION_ERROR
                 - MALFORMED_REQUEST_BODY
                 - PAYLOAD_TOO_LARGE
+                - UNAUTHENTICATED
+                - INVALID_CREDENTIALS
+                - NOT_A_PARTICIPANT
+                - NOT_YOUR_TURN
                 - GAME_NOT_FOUND
+                - PIG_GAME_NOT_FOUND
+                - USER_NOT_FOUND
                 - ROUTE_NOT_FOUND
                 - GAME_ALREADY_COMPLETED
                 - PIG_GAME_OVER
-                - INVALID_TARGET_SCORE
+                - USERNAME_TAKEN
                 - CONCURRENCY_CONFLICT
                 - INVALID_ROUND_COUNT
+                - INVALID_TARGET_SCORE
+                - INVALID_OPPONENT
                 - RATE_LIMIT_EXCEEDED
                 - INTERNAL_SERVER_ERROR
             message: { type: string }
@@ -498,7 +719,28 @@ components:
               description: Machine-readable context. Never contains secrets.
         meta: { $ref: '#/components/schemas/Meta' }
 
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Opaque session token issued by `/auth/register` or `/auth/login`.
+        Every game endpoint requires one — identity is never taken from a
+        request body (ADR-0007).
+
   responses:
+    Unauthorized:
+      description: Missing, malformed, or expired credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    Forbidden:
+      description: |
+        Authenticated but not permitted — acting out of turn (`NOT_YOUR_TURN`)
+        or not one of the two seated players (`NOT_A_PARTICIPANT`).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
     BadRequest:
       description: Malformed request
       content:

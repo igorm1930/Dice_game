@@ -7,13 +7,17 @@ import helmet from 'helmet';
 import type { Logger } from 'pino';
 
 import { parseCorsOrigin, type Env } from '../config/env';
+import type { AuthService } from '../core/services/auth.service';
+import type { AuthController } from './controllers/auth.controller';
 import type { GameController } from './controllers/game.controller';
 import type { HealthController } from './controllers/health.controller';
 import type { PigGameController } from './controllers/pig-game.controller';
+import { authenticate } from './middleware/authenticate.middleware';
 import { correlationIdMiddleware } from './middleware/correlation-id.middleware';
 import { errorHandler, notFoundHandler } from './middleware/error-handler.middleware';
 import { httpLogger } from './middleware/http-logger.middleware';
-import { createRateLimiter } from './middleware/rate-limit.middleware';
+import { createCredentialRateLimiter, createRateLimiter } from './middleware/rate-limit.middleware';
+import { createAuthRouter } from './routes/auth.routes';
 import { createGameRouter } from './routes/game.routes';
 import { createHealthRouter } from './routes/health.routes';
 import { createPigGameRouter } from './routes/pig-game.routes';
@@ -21,6 +25,8 @@ import { createPigGameRouter } from './routes/pig-game.routes';
 export interface AppDependencies {
   readonly env: Env;
   readonly logger: Logger;
+  readonly authService: AuthService;
+  readonly authController: AuthController;
   readonly gameController: GameController;
   readonly pigGameController: PigGameController;
   readonly healthController: HealthController;
@@ -46,7 +52,8 @@ export const API_PREFIX = '/api/v1';
  *   8. 404, then the terminal error handler
  */
 export function createApp(deps: AppDependencies): Express {
-  const { env, logger, gameController, pigGameController, healthController } = deps;
+  const { env, logger, authService, authController, gameController, pigGameController } = deps;
+  const { healthController } = deps;
   const app = express();
 
   // Never advertise the framework.
@@ -74,8 +81,22 @@ export function createApp(deps: AppDependencies): Express {
   app.use(createHealthRouter(healthController));
 
   app.use(API_PREFIX, createRateLimiter(env));
+
+  const requireAuth = authenticate(authService);
+
+  app.use(
+    API_PREFIX,
+    createAuthRouter({
+      controller: authController,
+      authenticate: requireAuth,
+      credentialLimiter: createCredentialRateLimiter(env),
+    }),
+  );
   app.use(API_PREFIX, createGameRouter(gameController));
-  app.use(API_PREFIX, createPigGameRouter(pigGameController));
+  app.use(
+    API_PREFIX,
+    createPigGameRouter({ controller: pigGameController, authenticate: requireAuth }),
+  );
 
   // Static frontend (the Pig Game client), served only when a build exists.
   // Mounted after the API so no static file can ever shadow an endpoint, and

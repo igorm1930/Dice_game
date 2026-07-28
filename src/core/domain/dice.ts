@@ -33,10 +33,12 @@ export function rollDice(random: RandomGenerator): DiceRoll {
 }
 
 /**
- * Rolls a single die — the Pig game's action unit.
+ * Rolls the pair as a positional tuple — the Pig game's action unit, where the
+ * two faces are symmetric (only "both sixes" is special) so naming them `first`
+ * and `second` would imply a distinction the rules do not have.
  */
-export function rollSingleDie(random: RandomGenerator): DieValue {
-  return nextDieValue(random);
+export function rollDicePair(random: RandomGenerator): readonly [DieValue, DieValue] {
+  return [nextDieValue(random), nextDieValue(random)];
 }
 
 function nextDieValue(random: RandomGenerator): DieValue {

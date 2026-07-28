@@ -31,15 +31,34 @@ const envSchema = z
     RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
     RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
 
+    /**
+     * Credential endpoints get their own, far smaller budget: the general limit
+     * is sized for gameplay and would happily allow thousands of password
+     * guesses an hour.
+     */
+    AUTH_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(900_000),
+    AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
+
+    /**
+     * Session lifetime. Short enough that a leaked token expires on its own,
+     * long enough to outlast a match. Sessions live in process memory, so a
+     * restart already invalidates every credential (ADR-0007).
+     */
+    AUTH_TOKEN_TTL_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(12 * 60 * 60 * 1000),
+
     SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 
     GAME_DEFAULT_ROUNDS: z.coerce.number().int().positive().default(5),
     GAME_MAX_ROUNDS: z.coerce.number().int().positive().default(20),
 
     /**
-     * Pig game target used when NEW GAME does not name one. Bounded by the
+     * Winning score used when NEW GAME does not name one. Bounded by the
      * domain's playable range so a misconfigured default fails at boot rather
-     * than on the first reset.
+     * than on the first game.
      */
     PIG_TARGET_SCORE: z.coerce
       .number()

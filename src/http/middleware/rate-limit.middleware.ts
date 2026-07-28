@@ -13,9 +13,25 @@ import type { ErrorResponse } from '../dto/api-response';
  * busy, converting a load problem into an outage.
  */
 export function createRateLimiter(env: Env): RateLimitRequestHandler {
+  return build(env.RATE_LIMIT_WINDOW_MS, env.RATE_LIMIT_MAX);
+}
+
+/**
+ * Tighter limiter for `/auth/register` and `/auth/login`.
+ *
+ * The general limit is sized for gameplay — a player rolling repeatedly is
+ * normal traffic. Password guessing is not, and a limit generous enough for
+ * dice is generous enough for a few thousand guesses an hour. Credential
+ * endpoints therefore get their own, much smaller budget.
+ */
+export function createCredentialRateLimiter(env: Env): RateLimitRequestHandler {
+  return build(env.AUTH_RATE_LIMIT_WINDOW_MS, env.AUTH_RATE_LIMIT_MAX);
+}
+
+function build(windowMs: number, limit: number): RateLimitRequestHandler {
   return rateLimit({
-    windowMs: env.RATE_LIMIT_WINDOW_MS,
-    limit: env.RATE_LIMIT_MAX,
+    windowMs,
+    limit,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     // Disabled: the library's default validation warns about trust-proxy

@@ -1,16 +1,17 @@
-import { Die } from './Die';
+import { Dice } from './Dice';
 
 interface ControlsProps {
-  readonly dieValue: number | null;
-  /** The spec hides the die once someone has won. */
-  readonly showDie: boolean;
-  /** ROLL/HOLD are disabled when the game is over or a request is in flight. */
+  /** Both faces of the last throw, straight from the server. */
+  readonly roll: readonly [number, number] | null;
+  /** The server's verdict on that throw. */
+  readonly busted: boolean;
+  /** The die pair is hidden once someone has won. */
+  readonly showDice: boolean;
+  /** ROLL/HOLD are enabled only when the server says this seat may act. */
   readonly canAct: boolean;
   readonly busy: boolean;
-  /** Free-text target for the next match; the server validates it. */
-  readonly targetInput: string;
-  readonly targetPlaceholder: number;
-  readonly onTargetInputChange: (value: string) => void;
+  /** Why the buttons are disabled, when they are. Server-derived, not invented. */
+  readonly hint: string | null;
   readonly onNewGame: () => void;
   readonly onRoll: () => void;
   readonly onHold: () => void;
@@ -38,49 +39,48 @@ function PillButton({
 }
 
 /**
- * The global centre column: NEW GAME (with the next match's target) on top,
- * the die in the middle, ROLL DICE and HOLD below. Only dispatches callbacks —
- * it holds no game logic at all.
+ * The centre column: NEW GAME on top, the two dice in the middle, ROLL DICE and
+ * HOLD below. Only dispatches callbacks — it holds no game logic at all.
  */
 export function Controls({
-  dieValue,
-  showDie,
+  roll,
+  busted,
+  showDice,
   canAct,
   busy,
-  targetInput,
-  targetPlaceholder,
-  onTargetInputChange,
+  hint,
   onNewGame,
   onRoll,
   onHold,
 }: ControlsProps) {
   return (
     <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-between py-8 sm:py-10">
-      <div className="flex flex-col items-center gap-2">
-        <PillButton label="🔄 New game" onClick={onNewGame} disabled={busy} />
-        <label className="pointer-events-auto flex items-center gap-2 rounded-full bg-white/70 px-4 py-1.5 text-xs font-semibold uppercase tracking-widest text-slate-700 shadow backdrop-blur">
-          Play to
-          <input
-            type="number"
-            inputMode="numeric"
-            min={2}
-            max={1000}
-            value={targetInput}
-            placeholder={String(targetPlaceholder)}
-            onChange={(event) => onTargetInputChange(event.target.value)}
-            className="w-16 rounded-md bg-white/90 px-2 py-0.5 text-center text-sm font-bold text-slate-800 outline-none ring-cyan-500 focus:ring-2"
-            aria-label="Target score for the next game"
-          />
-        </label>
-      </div>
+      <PillButton label="🔄 New game" onClick={onNewGame} disabled={busy} />
 
-      <div className="flex flex-col items-center gap-2">
-        {showDie ? <Die value={dieValue} /> : <div className="h-20 sm:h-24" aria-hidden="true" />}
+      <div className="flex flex-col items-center gap-3">
+        {showDice ? (
+          <Dice roll={roll} busted={busted} />
+        ) : (
+          <div className="h-16 sm:h-20" aria-hidden="true" />
+        )}
+        {busted && showDice && (
+          <p
+            role="status"
+            className="animate-pulse rounded-full bg-red-600 px-4 py-1.5 text-xs font-bold uppercase tracking-widest text-white shadow-lg"
+          >
+            💥 Double six — round lost
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col items-center gap-3">
         <PillButton label="🎲 Roll dice" onClick={onRoll} disabled={!canAct} />
         <PillButton label="📥 Hold" onClick={onHold} disabled={!canAct} />
+        {hint && (
+          <p className="pointer-events-none max-w-xs text-center text-xs font-medium text-slate-700/80">
+            {hint}
+          </p>
+        )}
       </div>
     </div>
   );

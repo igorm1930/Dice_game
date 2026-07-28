@@ -153,6 +153,28 @@ curl -s -o /dev/null -w 'expect 409: %{http_code}\n' \
 curl -s $BASE/api/v1/leaderboard | jq
 ```
 
+The Pig game — the one the frontend plays — needs two registered players:
+
+```bash
+ALICE=$(curl -s -X POST $BASE/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"checkalice","password":"deploy check password"}' | jq -r '.data.token')
+BOB=$(curl -s -X POST $BASE/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"checkbob","password":"deploy check password"}' | jq -r '.data.token')
+
+curl -s -X POST $BASE/api/v1/pig-game/new-game -H "Authorization: Bearer $ALICE" \
+  -H 'Content-Type: application/json' -d '{"opponent":"checkbob","targetScore":20}' | jq '.data.players'
+
+curl -s -X POST $BASE/api/v1/pig-game/roll -H "Authorization: Bearer $ALICE" | jq -c '.data.lastRoll'
+
+# Bob rolling on Alice's turn must be refused by the server, not by the UI.
+curl -s -X POST $BASE/api/v1/pig-game/roll -H "Authorization: Bearer $BOB" | jq -r '.error.code'
+# expect: NOT_YOUR_TURN
+```
+
+Registration is in-memory, so these accounts vanish on the next deploy — which
+is itself a useful check: if `checkalice` still exists, the machine did not
+restart.
+
 Confirm the image running in production is the one you think it is:
 
 ```bash

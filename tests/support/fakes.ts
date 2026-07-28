@@ -1,5 +1,6 @@
 import type { Clock } from '../../src/core/ports/clock.port';
 import type { IdGenerator } from '../../src/core/ports/id-generator.port';
+import type { PasswordHasher } from '../../src/core/ports/password-hasher.port';
 import type { RandomGenerator } from '../../src/core/ports/random-generator.port';
 
 /**
@@ -72,5 +73,24 @@ export class SequentialIdGenerator implements IdGenerator {
     this.counter += 1;
     const suffix = this.counter.toString(16).padStart(12, '0');
     return `00000000-0000-4000-8000-${suffix}`;
+  }
+}
+
+/**
+ * A hasher that is honest about its contract but costs nothing.
+ *
+ * The shipped `ScryptPasswordHasher` is deliberately slow — around 100 ms per
+ * call, which is the point of a KDF and also the reason a suite that registers
+ * dozens of players cannot use it. This double preserves the two properties the
+ * services actually depend on (a hash round-trips; a wrong password fails)
+ * while running in microseconds. The real adapter has its own dedicated tests.
+ */
+export class FakePasswordHasher implements PasswordHasher {
+  hash(plaintext: string): Promise<string> {
+    return Promise.resolve(`fake$${Buffer.from(plaintext).toString('base64')}`);
+  }
+
+  async verify(plaintext: string, stored: string): Promise<boolean> {
+    return (await this.hash(plaintext)) === stored;
   }
 }

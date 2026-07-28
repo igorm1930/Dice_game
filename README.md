@@ -1,15 +1,40 @@
 # Dice Game Service
 
-A production-ready dice game backend built with **Express 4 + TypeScript**, using
-a ports-and-adapters architecture with an in-memory repository.
+A two-player dice game where **all game logic lives in the backend API**, with a
+React frontend that only renders and dispatches. Built with **Express 4 +
+TypeScript** in a ports-and-adapters architecture, authenticated, containerised,
+and deployed by an immutable digest.
 
 The game itself is small on purpose. The interesting parts are the seams: how
-persistence is abstracted, how concurrency is handled, how failures surface, and
-how the thing gets built, verified, and deployed.
+identity is proven, how persistence is abstracted, how concurrency is handled,
+how failures surface, and how the thing gets built, verified, and deployed.
 
 ```
-248 tests · 99% statement coverage · 89% branch coverage · 0 lint errors
+362 tests · 99% statement coverage · 92% branch coverage · 0 lint errors
 ```
+
+### The brief, and where each requirement lives
+
+| Requirement                                     | Where it is enforced                                                                                                    |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 2 players, playing in rounds                    | [`pig-game.ts`](src/core/domain/pig-game.ts) — two seats bound to two identities                                        |
+| Roll 2 dice as many times as you want           | [`rollDicePair`](src/core/domain/dice.ts) + `applyRoll`                                                                 |
+| Each roll adds to the round score               | `applyRoll` — `currentTurnScore += d1 + d2`                                                                             |
+| **6 & 6** loses the round score, turn passes    | `isBust` / `applyRoll` — a single six is an ordinary six                                                                |
+| Hold: round score → global score, turn passes   | `applyHold`                                                                                                             |
+| First to the winning score wins                 | `applyHold` — checked on hold only                                                                                      |
+| Players can set the winning score (default 100) | `createPigGame`, `PIG_TARGET_SCORE`; frozen for the match                                                               |
+| A player can start a new game at any time       | `POST /api/v1/pig-game/new-game`, allowed mid-match                                                                     |
+| **API with authentication**                     | [`auth.service.ts`](src/core/services/auth.service.ts), [ADR-0007](docs/adr/0007-authentication-and-player-identity.md) |
+| API manages player identities                   | `User` domain + `UserRepository`; identity only ever comes from the bearer token                                        |
+| API validates turns and actions                 | `requireTurn` → `403 NOT_YOUR_TURN` / `NOT_A_PARTICIPANT`                                                               |
+| Only authenticated users can create/play        | `authenticate` mounted on the router, not inside handlers                                                               |
+| Both users simulated on one page                | Two independent sign-in cards, two tokens ([`App.tsx`](client/src/App.tsx))                                             |
+| React app: authenticate, display, call the API  | [`client/`](client/src)                                                                                                 |
+| **No game logic in the frontend**               | Enforced by design — even "was that a bust" arrives as `bustedOnLastRoll`                                               |
+
+Optional extras implemented: **win counter per player** (#1), **local-storage
+session persistence** (#2), **double-six pause + message** (#4).
 
 ---
 
@@ -17,6 +42,7 @@ how the thing gets built, verified, and deployed.
 
 - [Quick start](#quick-start)
 - [The Pig Game (full-stack)](#the-pig-game-full-stack)
+- [Authentication](#authentication)
 - [The guiding principle](#the-guiding-principle)
 - [Architecture](#architecture)
 - [Request lifecycle](#request-lifecycle)
@@ -67,34 +93,45 @@ curl -s http://localhost:3000/api/v1/leaderboard | jq
 
 ## The Pig Game (full-stack)
 
-The service also hosts a two-player, turn-based **Pig** dice game with a React
-frontend — added as a parallel vertical (own domain module, port, repository,
-service, controller) without touching a single existing game file, which is the
-ports architecture doing exactly what it promised.
+Two players, two dice, one server-owned match.
 
-**Rules (enforced server-side only):** roll a die — a **6 busts**, wiping your
-turn score and passing play; 1–5 accumulate. HOLD banks the turn score; first
-to the match's target wins. The target is chosen at NEW GAME (**default 100**,
-playable range 2–1000, `PIG_TARGET_SCORE` sets the default) and is frozen for
-the match. Roll and hold accept **no request body at all** — every in-match
-rule lives in `PigGameService`, so there is nothing a modified client could
-send to cheat with; the target is the single, validated setup input. The UI is
-a pure renderer — it draws whatever `GET /api/v1/pig-game` returns (even the
-die face comes from the server's `lastRoll`) and posts bare actions.
+**Rules — enforced server-side only:**
 
-| Method | Endpoint                    | Meaning                                   |
-| ------ | --------------------------- | ----------------------------------------- |
-| `GET`  | `/api/v1/pig-game`          | Current shared state                      |
-| `POST` | `/api/v1/pig-game/roll`     | Roll the die                              |
-| `POST` | `/api/v1/pig-game/hold`     | Bank the turn score                       |
-| `POST` | `/api/v1/pig-game/new-game` | Reset — optional `{ "targetScore": 100 }` |
+- On your turn you may throw **two dice** as many times as you like; each throw
+  adds the sum of both dice to your **round score**.
+- Throwing **6 & 6** loses the round score and passes the turn. A single six is
+  worth six like any other face.
+- **HOLD** adds the round score to your **global score** and passes the turn.
+  Holding on zero is legal and simply forfeits the turn.
+- The **first player to reach the winning score wins** — checked on hold, so a
+  hot streak is worth nothing until it is banked.
+- Players choose the winning score when starting a game (**default 100**,
+  playable range 2–1000, `PIG_TARGET_SCORE` sets the default). It is frozen for
+  the match.
+- Any authenticated player may start a new game **at any time**.
 
-Actions on a finished game return `409 PIG_GAME_OVER` — the UI disables its
-buttons, but the backend does not rely on that.
+Roll and hold accept **no request body at all**. The dice are generated in
+`PigGameService` and the actor is whoever holds the bearer token, so there is no
+field a modified client could smuggle a die value, a score, or a player index
+into. The UI is a pure renderer — it draws whatever `GET /api/v1/pig-game`
+returns, down to the dice faces (`lastRoll`) and the bust verdict
+(`bustedOnLastRoll`), and posts bare actions.
+
+| Method | Endpoint                    | Meaning                                     | Auth |
+| ------ | --------------------------- | ------------------------------------------- | ---- |
+| `GET`  | `/api/v1/pig-game`          | Current shared state                        | ✅   |
+| `POST` | `/api/v1/pig-game/roll`     | Throw both dice                             | ✅   |
+| `POST` | `/api/v1/pig-game/hold`     | Bank the round score                        | ✅   |
+| `POST` | `/api/v1/pig-game/new-game` | `{ "opponent": "bob", "targetScore": 100 }` | ✅   |
+
+Acting out of turn returns `403 NOT_YOUR_TURN`; a player who is not seated gets
+`403 NOT_A_PARTICIPANT`; anything after a win returns `409 PIG_GAME_OVER`. The
+UI disables its buttons at those points, but the backend does not rely on that —
+`curl` gets the same answer.
 
 ```bash
 # Frontend development (two terminals)
-npm run dev                       # API on :3000
+npm run dev                          # API on :3000
 cd client && npm ci && npm run dev   # UI on :5173, proxied to the API
 
 # Production composition — Express serves the built UI at /
@@ -106,8 +143,66 @@ docker compose up --build
 
 The client build lands in `client/dist`; `createApp` serves it statically only
 when that directory exists, so API-only deployments and the test suite are
-untouched. Open the page in two tabs: both render the same server-owned match,
-which is the "backend as source of truth" property made visible.
+untouched.
+
+**Playing it.** The brief asks for both users to be simulated on the same page,
+so the page carries two independent sign-in cards. Sign up as Player 1, sign up
+as Player 2, press **New game** — the two seats are now two real accounts, and
+each action is sent with that seat's own token. Open the page in a second tab
+and it renders the same match, because the match lives on the server.
+
+---
+
+## Authentication
+
+Full rationale in [ADR-0007](docs/adr/0007-authentication-and-player-identity.md).
+The short version:
+
+- **Opaque bearer tokens**, not JWTs. A JWT's advantage is stateless
+  verification across instances; this service is deliberately a single replica
+  with an in-memory store (ADR-0001), so a JWT would buy nothing while costing a
+  signing key to manage and taking away revocation. Behind the
+  `AuthTokenService` port, switching is one adapter.
+- **scrypt** from `node:crypto` at OWASP's `N = 2^15`, not bcrypt or argon2 —
+  both are native modules, which would put a compiler in the build image.
+  Parameters are encoded into each stored hash so the cost can be raised later
+  without invalidating existing passwords.
+- **Login is not an enumeration oracle.** A wrong password and an unknown
+  username return an identical body _and_ burn the same CPU — an unknown user
+  still triggers a throwaway hash verification, because otherwise the timing
+  difference tells an attacker which accounts exist. Both properties are
+  asserted in the suite.
+- **Credential endpoints have their own rate limit.** A budget sized for
+  gameplay is a budget sized for thousands of password guesses an hour.
+
+| Method | Endpoint                | Meaning                              | Success |
+| ------ | ----------------------- | ------------------------------------ | ------- |
+| `POST` | `/api/v1/auth/register` | Create a player, return a token      | `201`   |
+| `POST` | `/api/v1/auth/login`    | Exchange credentials for a token     | `200`   |
+| `POST` | `/api/v1/auth/logout`   | Revoke the token (a real revocation) | `204`   |
+| `GET`  | `/api/v1/auth/me`       | Identify the bearer                  | `200`   |
+
+```bash
+BASE=http://localhost:3000
+
+ALICE=$(curl -s -X POST $BASE/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"correct horse battery"}' | jq -r '.data.token')
+curl -s -X POST $BASE/api/v1/auth/register -H 'Content-Type: application/json' \
+  -d '{"username":"bob","password":"correct horse battery"}' > /dev/null
+
+curl -s -X POST $BASE/api/v1/pig-game/new-game -H "Authorization: Bearer $ALICE" \
+  -H 'Content-Type: application/json' -d '{"opponent":"bob","targetScore":50}' | jq '.data'
+
+curl -s -X POST $BASE/api/v1/pig-game/roll -H "Authorization: Bearer $ALICE" | jq '.data.lastRoll'
+
+# Bob rolling on Alice's turn — 403, whatever the UI thinks
+curl -s -X POST $BASE/api/v1/pig-game/roll -H "Authorization: Bearer $BOB" | jq '.error.code'
+```
+
+Identity is resolved once, by middleware, and reaches handlers as `req.user`. No
+route reads a user id from a body, a query string, or any header other than
+`Authorization` — which is what makes "the API validates turns" a structural
+property rather than a promise.
 
 ---
 
@@ -229,15 +324,21 @@ src/
 │
 ├── core/                             ← zero framework dependencies
 │   ├── domain/
-│   │   ├── game.ts                   Immutable aggregate + transitions
-│   │   ├── scoring.ts                The rulebook (pure function)
-│   │   ├── dice.ts                   DieValue literal union
+│   │   ├── pig-game.ts               Pig aggregate: 2 dice, seats, turn rules
+│   │   ├── user.ts                   Player identity + auth error taxonomy
+│   │   ├── game.ts                   Rounds-game aggregate + transitions
+│   │   ├── scoring.ts                The rounds-game rulebook (pure function)
+│   │   ├── dice.ts                   DieValue literal union, dice throws
 │   │   └── errors.ts                 Domain errors — codes, no HTTP statuses
 │   ├── ports/                        Interfaces the core depends on
-│   └── services/game.service.ts      Use-case orchestration
+│   └── services/
+│       ├── auth.service.ts           Register, login, resolve a credential
+│       ├── pig-game.service.ts       The Pig rules, under lock
+│       └── game.service.ts           Rounds-game orchestration
 │
 ├── infrastructure/                   ← adapters
-│   ├── persistence/                  In-memory repo (clone + version guard)
+│   ├── auth/                         scrypt hasher, opaque session store
+│   ├── persistence/                  In-memory repos (clone + version guard)
 │   ├── concurrency/async-mutex.ts    Per-key serialisation
 │   ├── random/, time/, id/           Deterministic-under-test adapters
 │   └── logging/                      Pino + AsyncLocalStorage context
@@ -245,12 +346,18 @@ src/
 ├── http/                             ← delivery
 │   ├── app.ts                        Middleware assembly
 │   ├── controllers/, routes/
-│   ├── middleware/                   Correlation, validation, errors, limits
+│   ├── middleware/                   Auth, correlation, validation, errors, limits
 │   ├── dto/                          Request schemas + response contracts
 │   └── mappers/                      Domain → wire (anti-corruption layer)
 │
 ├── container.ts                      Composition root
 └── server.ts                         Bootstrap, signals, graceful drain
+
+client/                               ← React 19 + Vite + Tailwind
+├── src/App.tsx                       Two sign-in seats, one server-owned board
+├── src/api.ts                        The client's entire knowledge of the API
+├── src/sessions.ts                   Per-seat token persistence
+└── src/components/                   AuthPanel, PlayerBoard, Dice, Controls
 
 tests/
 ├── unit/                             Domain, service, adapters, middleware
@@ -322,6 +429,11 @@ inconsistent state.
 
 ## Game rules
 
+The Pig rules are above, in [The Pig Game](#the-pig-game-full-stack). This
+section documents the **rounds game** — an earlier, separate vertical that still
+ships at `/api/v1/games` (see [What I deliberately did not
+build](#what-i-deliberately-did-not-build)).
+
 Two dice per round. Rules are evaluated in strict precedence order:
 
 | Precedence | Outcome       | Condition       | Points                              |
@@ -344,15 +456,23 @@ with symmetry (die order never matters) and the non-negative-score invariant.
 
 Base path: `/api/v1`
 
-| Method | Endpoint               | Description            | Success       |
-| ------ | ---------------------- | ---------------------- | ------------- |
-| `POST` | `/games`               | Create a game          | `201`         |
-| `GET`  | `/games`               | List games (paginated) | `200`         |
-| `GET`  | `/games/:gameId`       | Fetch one game         | `200`         |
-| `POST` | `/games/:gameId/rolls` | Play a round           | `201`         |
-| `GET`  | `/leaderboard`         | Top completed games    | `200`         |
-| `GET`  | `/healthz`             | Liveness probe         | `200`         |
-| `GET`  | `/readyz`              | Readiness probe        | `200` / `503` |
+| Method | Endpoint               | Description                    | Auth | Success       |
+| ------ | ---------------------- | ------------------------------ | ---- | ------------- |
+| `POST` | `/auth/register`       | Create a player                |      | `201`         |
+| `POST` | `/auth/login`          | Exchange credentials for token |      | `200`         |
+| `POST` | `/auth/logout`         | Revoke the token               | ✅   | `204`         |
+| `GET`  | `/auth/me`             | Identify the bearer            | ✅   | `200`         |
+| `GET`  | `/pig-game`            | Current shared match           | ✅   | `200`         |
+| `POST` | `/pig-game/roll`       | Throw both dice                | ✅   | `200`         |
+| `POST` | `/pig-game/hold`       | Bank the round score           | ✅   | `200`         |
+| `POST` | `/pig-game/new-game`   | Start a match                  | ✅   | `201`         |
+| `POST` | `/games`               | Create a game (rounds game)    |      | `201`         |
+| `GET`  | `/games`               | List games (paginated)         |      | `200`         |
+| `GET`  | `/games/:gameId`       | Fetch one game                 |      | `200`         |
+| `POST` | `/games/:gameId/rolls` | Play a round                   |      | `201`         |
+| `GET`  | `/leaderboard`         | Top completed games            |      | `200`         |
+| `GET`  | `/healthz`             | Liveness probe                 |      | `200`         |
+| `GET`  | `/readyz`              | Readiness probe                |      | `200` / `503` |
 
 ### Response envelope
 
@@ -397,18 +517,31 @@ Clients branch on the stable `code`, never on message text.
 
 ### Error codes
 
-| Code                     | Status | Meaning                                 |
-| ------------------------ | ------ | --------------------------------------- |
-| `VALIDATION_ERROR`       | 400    | Payload failed schema validation        |
-| `MALFORMED_REQUEST_BODY` | 400    | Body was not valid JSON                 |
-| `GAME_NOT_FOUND`         | 404    | No such game                            |
-| `ROUTE_NOT_FOUND`        | 404    | No such endpoint                        |
-| `GAME_ALREADY_COMPLETED` | 409    | All rounds already played               |
-| `CONCURRENCY_CONFLICT`   | 409    | Write against a stale snapshot          |
-| `PAYLOAD_TOO_LARGE`      | 413    | Body exceeded the limit                 |
-| `INVALID_ROUND_COUNT`    | 422    | Well-formed, but violates a domain rule |
-| `RATE_LIMIT_EXCEEDED`    | 429    | Too many requests                       |
-| `INTERNAL_SERVER_ERROR`  | 500    | A bug — opaque by design                |
+| Code                     | Status | Meaning                                       |
+| ------------------------ | ------ | --------------------------------------------- |
+| `VALIDATION_ERROR`       | 400    | Payload failed schema validation              |
+| `MALFORMED_REQUEST_BODY` | 400    | Body was not valid JSON                       |
+| `UNAUTHENTICATED`        | 401    | Missing, malformed, or expired credential     |
+| `INVALID_CREDENTIALS`    | 401    | Wrong password **or** unknown user            |
+| `NOT_YOUR_TURN`          | 403    | Seated, but it is the other player's turn     |
+| `NOT_A_PARTICIPANT`      | 403    | Authenticated, but not one of the two players |
+| `GAME_NOT_FOUND`         | 404    | No such game                                  |
+| `PIG_GAME_NOT_FOUND`     | 404    | No Pig match has been started yet             |
+| `USER_NOT_FOUND`         | 404    | Named opponent is not registered              |
+| `ROUTE_NOT_FOUND`        | 404    | No such endpoint                              |
+| `GAME_ALREADY_COMPLETED` | 409    | All rounds already played                     |
+| `PIG_GAME_OVER`          | 409    | The Pig match has already been won            |
+| `USERNAME_TAKEN`         | 409    | Registration collided with an existing player |
+| `CONCURRENCY_CONFLICT`   | 409    | Write against a stale snapshot                |
+| `PAYLOAD_TOO_LARGE`      | 413    | Body exceeded the limit                       |
+| `INVALID_ROUND_COUNT`    | 422    | Well-formed, but violates a domain rule       |
+| `INVALID_TARGET_SCORE`   | 422    | Winning score outside the playable range      |
+| `INVALID_OPPONENT`       | 422    | A player naming themselves as the opponent    |
+| `RATE_LIMIT_EXCEEDED`    | 429    | Too many requests                             |
+| `INTERNAL_SERVER_ERROR`  | 500    | A bug — opaque by design                      |
+
+The **401 vs 403** split is deliberate too: 401 means "I do not know who you
+are", 403 means "I know exactly who you are, and no".
 
 The **400 vs 422** split is deliberate: `{"rounds": "abc"}` is malformed (400);
 `{"rounds": 50}` against a limit of 20 is well-formed but domain-invalid (422).
@@ -511,16 +644,20 @@ and `unhandledRejection` log at `fatal` and drain with a non-zero exit.
 
 ### Security
 
-| Control          | Implementation                                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------------------------- |
-| Security headers | `helmet` defaults; `x-powered-by` disabled                                                              |
-| Input validation | Zod at the edge, `.strict()` — unknown fields rejected                                                  |
-| Body size limit  | Configurable (16 kb default) → `413`                                                                    |
-| Rate limiting    | Fixed window, API surface only — **probes never throttled**                                             |
-| Proxy trust      | Exact hop count, not `true` — blanket trust lets a client spoof `X-Forwarded-For` and evade the limiter |
-| CSPRNG           | `crypto.randomInt` — no modulo bias, not `Math.random()`                                                |
-| Error opacity    | 5xx never leaks a message or stack                                                                      |
-| Container        | Non-root, read-only FS, `cap_drop: ALL`, `no-new-privileges`                                            |
+| Control          | Implementation                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Security headers | `helmet` defaults; `x-powered-by` disabled                                                                                |
+| Input validation | Zod at the edge, `.strict()` — unknown fields rejected                                                                    |
+| Body size limit  | Configurable (16 kb default) → `413`                                                                                      |
+| Rate limiting    | Fixed window, API surface only — **probes never throttled**                                                               |
+| Proxy trust      | Exact hop count, not `true` — blanket trust lets a client spoof `X-Forwarded-For` and evade the limiter                   |
+| CSPRNG           | `crypto.randomInt` — no modulo bias, not `Math.random()`                                                                  |
+| Passwords        | scrypt (`N = 2^15`), per-password salt, `timingSafeEqual` compare                                                         |
+| Credentials      | 256-bit opaque bearer tokens, server-side and revocable ([ADR-0007](docs/adr/0007-authentication-and-player-identity.md)) |
+| Login hardening  | Identical body **and** identical cost for wrong-password vs unknown-user                                                  |
+| Brute force      | Separate, much tighter rate limit on `/auth/*` credential endpoints                                                       |
+| Error opacity    | 5xx never leaks a message or stack                                                                                        |
+| Container        | Non-root, read-only FS, `cap_drop: ALL`, `no-new-privileges`                                                              |
 
 Rate limiting deliberately excludes `/healthz` and `/readyz`: a throttled probe
 makes the orchestrator restart a service that is merely busy, converting a load
@@ -531,17 +668,17 @@ spike into an outage.
 ## Testing strategy
 
 ```
-209 tests across 13 suites — no jest.mock(), no test doubles for our own code
+362 tests across 21 suites — no jest.mock(), no test doubles for our own code
 ```
 
-| Layer            | What it proves                                                        |
-| ---------------- | --------------------------------------------------------------------- |
-| **Domain**       | All 36 rolls enumerated; symmetry; invariants; immutability           |
-| **Service**      | Orchestration with fakes; concurrency; round limits                   |
-| **Adapters**     | Snapshot isolation; version conflicts; RNG uniformity; mutex fairness |
-| **Middleware**   | Every error mapping; 500 opacity; validation coercion                 |
-| **Integration**  | Full stack via supertest — no ports, no network                       |
-| **Architecture** | Layering rules enforced by parsing the import graph                   |
+| Layer            | What it proves                                                             |
+| ---------------- | -------------------------------------------------------------------------- |
+| **Domain**       | All 36 rolls enumerated; bust vs single six; turn and seat enforcement     |
+| **Service**      | Orchestration with fakes; concurrency; win counting; round limits          |
+| **Adapters**     | Snapshot isolation; version conflicts; RNG uniformity; scrypt round-trip   |
+| **Middleware**   | Every error mapping; 500 opacity; validation coercion; bearer parsing      |
+| **Integration**  | Full stack via supertest — 401/403/404/409 taxonomy, rate limits, no ports |
+| **Architecture** | Layering rules enforced by parsing the import graph                        |
 
 The suite contains **no `jest.mock()` calls**. Because randomness, time, and
 identity are injected ports, tests supply real fakes and assert exact values —
@@ -552,6 +689,12 @@ Two things worth calling out:
 **The architecture tests are verified to fail.** A guard that never fires is
 worthless, so the layering test was confirmed to fail when an `express` import is
 injected into the core, and pass when removed.
+
+**The anti-cheat properties are tested as properties, not as UI states.** A roll
+sent with an extra body naming `lastRoll: [6,6]` and `totalScores: [99,0]` is
+asserted to change nothing; a 403 out-of-turn is asserted at the API, not by
+checking that a button is disabled; and login is asserted to return a
+byte-identical error body for a wrong password and an unknown user.
 
 **The 500 path is unit tested directly.** By construction no valid request
 triggers an internal error, so the opacity guarantee — no message, no stack, no
@@ -638,6 +781,7 @@ Rollback is a workflow re-dispatch with `image_tag` set to a previous SHA.
 | [0004](docs/adr/0004-concurrency-control.md)                             | Keyed mutex + optimistic versioning                        |
 | [0005](docs/adr/0005-error-handling-strategy.md)                         | Transport-agnostic errors, centralised HTTP mapping        |
 | [0006](docs/adr/0006-observability-and-lifecycle.md)                     | Structured logging, correlation ids, graceful shutdown     |
+| [0007](docs/adr/0007-authentication-and-player-identity.md)              | **Opaque server-side sessions for player identity**        |
 
 ---
 
@@ -659,8 +803,22 @@ later costs one line plus one class. [ADR-0001](docs/adr/0001-in-memory-persiste
 **A DI framework.** Eight objects wired in one readable function. A container
 earns its keep at hundreds of providers, not eight. [ADR-0003](docs/adr/0003-manual-dependency-injection.md).
 
-**Authentication.** Not in scope, and a hand-rolled JWT layer nobody asked for is
-worse than none. The middleware seam is where it would go.
+**JWTs.** Authentication _is_ in scope and is built, but as opaque server-side
+sessions. A JWT's advantage is stateless verification across instances; with one
+replica and an in-memory store it buys nothing, costs a signing key to manage,
+and loses revocation. [ADR-0007](docs/adr/0007-authentication-and-player-identity.md).
+
+**An AI opponent, sound effects** (optional extras #3 and #5). Both are real
+features rather than decorations, and neither would have said anything new about
+the thing being assessed. The win counter, session persistence, and the
+double-six pause were cheap and are in.
+
+**Removing the rounds game.** `/api/v1/games` predates this brief and is a
+different game with different rules. It stays for now because the deploy
+pipeline's post-deploy smoke test plays it end to end, and because it is the
+clearest evidence the ports architecture holds: the Pig vertical was added
+alongside it — own domain module, port, repository, service, controller —
+without editing a single one of its files.
 
 **A `/metrics` endpoint.** Without a Prometheus scraper to consume it, it's code
 nobody reads. The obvious next addition once a monitoring stack exists.
@@ -676,20 +834,24 @@ All variables are validated by Zod at boot; the process **refuses to start** on
 invalid config rather than failing later on a request path. A crash-looping
 container is a signal an operator can act on; a 500 at 3am is not.
 
-| Variable               | Default            | Notes                                      |
-| ---------------------- | ------------------ | ------------------------------------------ |
-| `NODE_ENV`             | `development`      | `development` · `test` · `production`      |
-| `PORT` / `HOST`        | `3000` / `0.0.0.0` |                                            |
-| `LOG_LEVEL`            | `info`             | `trace`…`fatal`, `silent`                  |
-| `LOG_PRETTY`           | `false`            | Dev only — must stay `false` in production |
-| `CORS_ORIGIN`          | `*`                | Comma-separated allowlist                  |
-| `BODY_LIMIT`           | `16kb`             |                                            |
-| `TRUST_PROXY_HOPS`     | `0`                | Must be > 0 behind a load balancer         |
-| `RATE_LIMIT_WINDOW_MS` | `60000`            |                                            |
-| `RATE_LIMIT_MAX`       | `120`              | Per window, per IP                         |
-| `SHUTDOWN_TIMEOUT_MS`  | `10000`            | Drain grace period                         |
-| `GAME_DEFAULT_ROUNDS`  | `5`                |                                            |
-| `GAME_MAX_ROUNDS`      | `20`               |                                            |
+| Variable                    | Default            | Notes                                      |
+| --------------------------- | ------------------ | ------------------------------------------ |
+| `NODE_ENV`                  | `development`      | `development` · `test` · `production`      |
+| `PORT` / `HOST`             | `3000` / `0.0.0.0` |                                            |
+| `LOG_LEVEL`                 | `info`             | `trace`…`fatal`, `silent`                  |
+| `LOG_PRETTY`                | `false`            | Dev only — must stay `false` in production |
+| `CORS_ORIGIN`               | `*`                | Comma-separated allowlist                  |
+| `BODY_LIMIT`                | `16kb`             |                                            |
+| `TRUST_PROXY_HOPS`          | `0`                | Must be > 0 behind a load balancer         |
+| `RATE_LIMIT_WINDOW_MS`      | `60000`            |                                            |
+| `RATE_LIMIT_MAX`            | `120`              | Per window, per IP                         |
+| `AUTH_RATE_LIMIT_WINDOW_MS` | `900000`           | Credential endpoints only                  |
+| `AUTH_RATE_LIMIT_MAX`       | `20`               | Deliberately far below the gameplay budget |
+| `AUTH_TOKEN_TTL_MS`         | `43200000`         | Session lifetime (12h)                     |
+| `SHUTDOWN_TIMEOUT_MS`       | `10000`            | Drain grace period                         |
+| `PIG_TARGET_SCORE`          | `100`              | Default winning score (playable 2–1000)    |
+| `GAME_DEFAULT_ROUNDS`       | `5`                | Rounds game                                |
+| `GAME_MAX_ROUNDS`           | `20`               | Rounds game                                |
 
 ## Scripts
 

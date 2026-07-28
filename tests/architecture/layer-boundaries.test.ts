@@ -129,6 +129,9 @@ describe('Architecture: layer boundaries', () => {
       const ADAPTERS = [
         'InMemoryGameRepository',
         'InMemoryPigGameRepository',
+        'InMemoryUserRepository',
+        'InMemoryAuthTokenService',
+        'ScryptPasswordHasher',
         'CryptoRandomGenerator',
         'SystemClock',
         'UuidGenerator',
