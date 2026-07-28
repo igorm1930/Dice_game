@@ -1,13 +1,14 @@
 import { type DicePair } from './dice';
 import {
   GameOverError,
+  HoldNotAvailableError,
   InvalidOpponentError,
   InvalidTargetScoreError,
   NotAParticipantError,
   NotYourTurnError,
 } from './errors';
 import { type GameRules, type RulesetRef } from './rules/game-rules';
-import { resolveRules } from './rules/registry';
+import { DEFAULT_RULESET_REF, resolveRules, tryResolveRules } from './rules/registry';
 import { otherSeat, type Seat } from './seat';
 
 /**
@@ -92,8 +93,17 @@ export interface SeatAssignment {
 export interface CreateGameParams {
   readonly id: string;
   readonly players: readonly [SeatAssignment, SeatAssignment];
-  /** Resolved from the allow-list by the caller; never built from client input. */
-  readonly rules: GameRules;
+  /**
+   * The ruleset to play under, as a **ref** rather than a policy object.
+   *
+   * Taking the identity and resolving it here is what makes "nothing executable
+   * ever comes from client input" structural instead of a request. A caller who
+   * could hand in a `GameRules` object would decide both the behaviour and the
+   * `ruleset` stamped on the state, and the allow-list would be decoration.
+   *
+   * Omitted means {@link DEFAULT_RULESET_REF}.
+   */
+  readonly ruleset?: RulesetRef | undefined;
   /** Omitted means the ruleset's default. Frozen for the match once set. */
   readonly winningScore?: number | undefined;
 }
@@ -154,11 +164,13 @@ export function seatOf(state: GameState, userId: string): Seat | null {
 /**
  * Seats two players and starts game 1.
  *
+ * @throws {UnsupportedRulesetError} if the ref is not on the allow-list.
  * @throws {InvalidTargetScoreError} if the winning score is not playable.
  * @throws {InvalidOpponentError} if both seats hold the same identity.
  */
 export function createGame(params: CreateGameParams): GameState {
-  const { rules } = params;
+  const ruleset = params.ruleset ?? DEFAULT_RULESET_REF;
+  const rules = resolveRules(ruleset);
   const winningScore = params.winningScore ?? rules.defaultWinningScore;
 
   assertPlayableWinningScore(winningScore, rules);
@@ -245,25 +257,34 @@ export function applyRoll(
 
   const outcome = rules.evaluateRoll(dice);
 
-  if (outcome.type === 'LOSE_ROUND_AND_PASS') {
-    return freeze({
-      ...state,
-      roundScore: 0,
-      activePlayer: otherSeat(state.activePlayer),
-      lastDice: dice,
-      // `DOUBLE_SIX` is the only losing combination `standard@1` defines, and
-      // the wire contract names the effect after it. A future ruleset that lost
-      // a round some other way would need a new effect in the contract first.
-      effect: 'DOUBLE_SIX',
-    });
-  }
+  switch (outcome.type) {
+    case 'LOSE_ROUND_AND_PASS':
+      return freeze({
+        ...state,
+        roundScore: 0,
+        activePlayer: otherSeat(state.activePlayer),
+        lastDice: dice,
+        effect: outcome.effect,
+      });
 
-  return freeze({
-    ...state,
-    roundScore: state.roundScore + outcome.points,
-    lastDice: dice,
-    effect: 'NORMAL_ROLL',
-  });
+    case 'ADD_TO_ROUND':
+      return freeze({
+        ...state,
+        roundScore: state.roundScore + outcome.points,
+        lastDice: dice,
+        effect: outcome.effect,
+      });
+
+    default: {
+      // Exhaustiveness guard. Adding a variant to `RollOutcome` must be a
+      // compile error here rather than a silent fall-through — a new outcome
+      // that happened to carry `points` would otherwise be scored as an
+      // ordinary roll, which is exactly how a penalty rule would be applied
+      // with the wrong sign.
+      const unreachable: never = outcome;
+      throw new Error(`Unhandled roll outcome: ${JSON.stringify(unreachable)}`);
+    }
+  }
 }
 
 /**
@@ -281,6 +302,14 @@ export function applyRoll(
  */
 export function applyHold(state: GameState, userId: string, rules: GameRules): GameState {
   const seat = requireTurn(state, userId, 'hold');
+
+  // Asked here, not only in `availableActionsFor`. A policy hook consulted when
+  // deciding what to show the client but ignored when applying the action is
+  // not a rule — it is a suggestion, and a client that skipped the UI would
+  // bypass it entirely.
+  if (!rules.canHold(state)) {
+    throw new HoldNotAvailableError(seat);
+  }
 
   const player = state.players[seat];
   const banked = player.globalScore + state.roundScore;
@@ -363,14 +392,17 @@ export function startNewGame(state: GameState, userId: string, winningScore?: nu
  * All three are false for a non-participant — a spectator is told nothing about
  * whose turn it is by the shape of their own affordances.
  *
- * `rules` is optional because the answer under `standard@1` is fully determined
- * by turn and status. Pass the resolved policy and a future ruleset that
- * restricts holding is honoured here too, with no change at the call site.
+ * **Every boolean here must answer the same question its transition does.** The
+ * client trusts them completely, so advertising an action that `applyRoll`,
+ * `applyHold` or `startNewGame` would then refuse is the one failure this design
+ * cannot absorb — the user would press an enabled button and get an error. That
+ * is why `canStartNewGame` is computed rather than asserted, and why `rules` is
+ * required: a permissive default would answer for a policy nobody consulted.
  */
 export function availableActionsFor(
   state: GameState,
   userId: string,
-  rules?: GameRules,
+  rules: GameRules,
 ): AvailableActions {
   const seat = seatOf(state, userId);
 
@@ -382,9 +414,31 @@ export function availableActionsFor(
 
   return Object.freeze({
     canRoll: isMyTurn,
-    canHold: isMyTurn && (rules?.canHold(state) ?? true),
-    // A player may abandon a match in progress, and must be able to start
-    // another once one is decided. Both are the same affordance.
-    canStartNewGame: true,
+    canHold: isMyTurn && rules.canHold(state),
+    canStartNewGame: canStartNewGame(state),
   });
+}
+
+/**
+ * Mirrors exactly what {@link startNewGame} would do before it mutates anything.
+ *
+ * A participant may restart at any time — mid-game or after a win, both are the
+ * same affordance. But `startNewGame` re-resolves the stored ruleset and
+ * re-validates the carried winning score against that ruleset's current bounds,
+ * and either can fail for a game whose ruleset was withdrawn or whose bounds
+ * have since narrowed. Answering `true` in those positions would put a button
+ * in front of a player that throws when pressed.
+ */
+function canStartNewGame(state: GameState): boolean {
+  const rules = tryResolveRules(state.ruleset);
+
+  if (rules === null) {
+    return false;
+  }
+
+  return (
+    Number.isInteger(state.winningScore) &&
+    state.winningScore >= rules.minimumWinningScore &&
+    state.winningScore <= rules.maximumWinningScore
+  );
 }

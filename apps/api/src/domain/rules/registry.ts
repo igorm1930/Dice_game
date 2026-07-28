@@ -24,9 +24,18 @@ export function rulesetKey(ref: RulesetRef): string {
  * convention (a module is always strict mode, so an assignment to a frozen
  * object throws rather than failing silently).
  */
-const REGISTRY: Readonly<Record<string, GameRules>> = Object.freeze({
-  [rulesetKey(STANDARD_RULESET_REF)]: standardRulesV1,
-});
+/**
+ * Null-prototype on purpose. A plain object literal inherits from
+ * `Object.prototype`, so a key of the shape `id@version` planted there by
+ * prototype pollution anywhere in the process would be returned as a policy
+ * instead of throwing. `Object.freeze` does not protect against that — it
+ * guards the table's own properties, not what it inherits.
+ */
+const REGISTRY: Readonly<Record<string, GameRules>> = Object.freeze(
+  Object.assign(Object.create(null) as Record<string, GameRules>, {
+    [rulesetKey(STANDARD_RULESET_REF)]: standardRulesV1,
+  }),
+);
 
 /**
  * Resolves a persisted or requested ref to the policy that implements it.
@@ -34,13 +43,27 @@ const REGISTRY: Readonly<Record<string, GameRules>> = Object.freeze({
  * @throws {UnsupportedRulesetError} if the ref is not on the allow-list.
  */
 export function resolveRules(ref: RulesetRef): GameRules {
-  const rules = REGISTRY[rulesetKey(ref)];
+  const rules = tryResolveRules(ref);
 
-  if (rules === undefined) {
+  if (rules === null) {
     throw new UnsupportedRulesetError(ref);
   }
 
   return rules;
+}
+
+/**
+ * The total form of {@link resolveRules}, for callers that need to *ask*
+ * whether a ref is supported rather than assert it.
+ *
+ * `availableActionsFor` is the reason this exists: advertising an action the
+ * matching transition would refuse is the one failure mode this design cannot
+ * tolerate, because the client trusts those booleans completely.
+ */
+export function tryResolveRules(ref: RulesetRef): GameRules | null {
+  const key = rulesetKey(ref);
+
+  return Object.hasOwn(REGISTRY, key) ? (REGISTRY[key] ?? null) : null;
 }
 
 /** The ref new games are created under unless a caller names another. */

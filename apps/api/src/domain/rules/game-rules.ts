@@ -1,5 +1,5 @@
 import { type DicePair } from '../dice';
-import { type GameState } from '../game';
+import { type GameEffect, type GameState } from '../game';
 
 /**
  * The identity of the rules a game is played under.
@@ -23,10 +23,17 @@ export interface RulesetRef {
  * produces `LOSE_ROUND_AND_PASS`", an engine test asserts "`LOSE_ROUND_AND_PASS`
  * clears the round score and switches player". Changing a rule then cannot break
  * an engine test, and vice versa.
+ *
+ * The `effect` travels with the outcome because naming it is a rules decision,
+ * not an engine one. `standard@1` calls a lost round `DOUBLE_SIX` because under
+ * `standard@1` that is what causes it; a ruleset that lost a round on 5 and 5
+ * would say so here, and the engine would publish whatever it was told without
+ * needing to change. An engine that hardcoded `DOUBLE_SIX` would quietly
+ * mislabel every future ruleset — and animate the wrong thing on the client.
  */
 export type RollOutcome =
-  | { readonly type: 'ADD_TO_ROUND'; readonly points: number }
-  | { readonly type: 'LOSE_ROUND_AND_PASS' };
+  | { readonly type: 'ADD_TO_ROUND'; readonly points: number; readonly effect: GameEffect }
+  | { readonly type: 'LOSE_ROUND_AND_PASS'; readonly effect: GameEffect };
 
 /**
  * A scoring policy.

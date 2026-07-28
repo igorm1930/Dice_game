@@ -97,6 +97,23 @@ export class InvalidTargetScoreError extends DomainError {
   }
 }
 
+/**
+ * Raised when the ruleset refuses a hold in the current position.
+ *
+ * `standard@1` never raises this — banking a zero round score is legal there,
+ * and deliberately so. It exists because `GameRules.canHold` has to be enforced
+ * where the state actually changes, not only where the client's buttons are
+ * decided: advertising `canHold: false` while `applyHold` succeeded would mean
+ * the affordances and the transitions were answering to different rules.
+ */
+export class HoldNotAvailableError extends DomainError {
+  readonly code = 'HOLD_NOT_AVAILABLE';
+
+  constructor(seat: Seat) {
+    super('The ruleset does not permit holding in this position.', { seat });
+  }
+}
+
 /** Raised when a player tries to start a match against themselves. */
 export class InvalidOpponentError extends DomainError {
   readonly code = 'INVALID_OPPONENT';

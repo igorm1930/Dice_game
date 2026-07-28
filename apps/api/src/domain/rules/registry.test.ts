@@ -7,8 +7,9 @@ import {
   resolveRules,
   rulesetKey,
   supportedRulesetKeys,
+  tryResolveRules,
 } from './registry';
-import { standardRulesV1 } from './standard-v1';
+import { STANDARD_RULESET_REF, standardRulesV1 } from './standard-v1';
 
 describe('ruleset registry', () => {
   it('resolves standard@1 to the compiled-in policy', () => {
@@ -72,3 +73,33 @@ describe('ruleset registry', () => {
     expect(supportedRulesetKeys()).not.toBe(keys);
   });
 });
+
+describe('registry lookup safety', () => {
+  it('is not fooled by a polluted Object.prototype', () => {
+    // A plain object literal inherits from Object.prototype, so a key of the
+    // shape `id@version` planted there anywhere in the process would be handed
+    // back as a policy. Object.freeze does not defend against this — it guards
+    // own properties, not inherited ones.
+    const polluted = 'evil@1';
+
+    Object.defineProperty(Object.prototype, polluted, {
+      value: standardRulesV1,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+
+    try {
+      expect(() => resolveRules({ id: 'evil', version: 1 })).toThrow(UnsupportedRulesetError);
+      expect(tryResolveRules({ id: 'evil', version: 1 })).toBeNull();
+    } finally {
+      Reflect.deleteProperty(Object.prototype, polluted);
+    }
+  });
+
+  it('answers the same question twice, throwing and non-throwing', () => {
+    expect(tryResolveRules(STANDARD_RULESET_REF)).toBe(resolveRules(STANDARD_RULESET_REF));
+    expect(tryResolveRules({ id: 'standard', version: 2 })).toBeNull();
+  });
+});
+

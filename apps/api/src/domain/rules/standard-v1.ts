@@ -56,10 +56,13 @@ export const standardRulesV1: GameRules = Object.freeze({
 
   evaluateRoll(dice: DicePair): RollOutcome {
     if (dice[0] === BUST_FACE && dice[1] === BUST_FACE) {
-      return { type: 'LOSE_ROUND_AND_PASS' };
+      // The effect is named here, alongside the combination it describes, so
+      // that changing `BUST_FACE` changes the label with it. This file and its
+      // test are the only two places that know a lost round means two sixes.
+      return { type: 'LOSE_ROUND_AND_PASS', effect: 'DOUBLE_SIX' };
     }
 
-    return { type: 'ADD_TO_ROUND', points: dice[0] + dice[1] };
+    return { type: 'ADD_TO_ROUND', points: dice[0] + dice[1], effect: 'NORMAL_ROLL' };
   },
 
   /**

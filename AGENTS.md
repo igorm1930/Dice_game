@@ -120,6 +120,15 @@ build stage.
   produces `LOSE_ROUND_AND_PASS`"; an engine test asserts "`LOSE_ROUND_AND_PASS`
   clears the round score and switches player". Conflating them means changing a
   rule breaks engine tests for no reason.
+- **Engine fixtures never name a die face.** Use the `score`, `bust` and `bank`
+  helpers in `game.test.ts`, which drive transitions through a stand-in ruleset.
+  A fixture that reaches a banked total by throwing `[5, 5]` is silently
+  asserting that 5 and 5 is not the losing combination. This is verifiable: flip
+  `BUST_FACE` in `rules/standard-v1.ts` from 6 to 5 and exactly five tests fail,
+  all of them in `rules/standard-v1.test.ts`. If that change ever breaks a test
+  outside `rules/`, the abstraction has leaked.
+- Deliberate end-to-end tests of `standard@1` live in `rules/standard-v1.test.ts`
+  alongside the rule they depend on, not in the engine suite.
 - E2E uses deterministic dice and a low winning score. That is why
   `MIN_WINNING_SCORE` is 2 rather than 10 — a match can be won in one hold.
 
