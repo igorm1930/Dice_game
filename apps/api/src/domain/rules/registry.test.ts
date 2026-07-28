@@ -102,4 +102,3 @@ describe('registry lookup safety', () => {
     expect(tryResolveRules({ id: 'standard', version: 2 })).toBeNull();
   });
 });
-

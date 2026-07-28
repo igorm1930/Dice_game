@@ -35,11 +35,7 @@ export const MIN_WINNING_SCORE = 2;
 export const MAX_WINNING_SCORE = 1000;
 export const DEFAULT_WINNING_SCORE = 100;
 
-export const winningScoreSchema = z
-  .number()
-  .int()
-  .min(MIN_WINNING_SCORE)
-  .max(MAX_WINNING_SCORE);
+export const winningScoreSchema = z.number().int().min(MIN_WINNING_SCORE).max(MAX_WINNING_SCORE);
 
 /**
  * Optimistic concurrency token. The client echoes the revision it rendered; the
@@ -52,12 +48,7 @@ export const idSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Must be a 24-charact
 
 export const EMAIL_MAX_LENGTH = 254;
 
-export const emailSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .max(EMAIL_MAX_LENGTH)
-  .email();
+export const emailSchema = z.string().trim().toLowerCase().max(EMAIL_MAX_LENGTH).email();
 
 export const DISPLAY_NAME_MIN_LENGTH = 3;
 export const DISPLAY_NAME_MAX_LENGTH = 24;

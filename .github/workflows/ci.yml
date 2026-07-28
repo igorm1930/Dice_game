@@ -19,148 +19,134 @@ env:
   NODE_VERSION: '22'
 
 jobs:
-  # Static analysis and tests run as one job: they share an npm install, and
-  # splitting them would cost more in setup than it saves in parallelism.
+  # Static analysis and unit tests share one install, and turbo already runs the
+  # per-package tasks in parallel — splitting them into separate jobs would cost
+  # more in setup than it saves.
   verify:
-    name: Lint, typecheck & test
+    name: Format, lint, typecheck & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  # The domain-purity lint rule is the mechanism the whole architecture rests on:
+  # it is what stops a Mongoose import landing in the domain layer. A rule that
+  # is configured but never proven to fire is worth nothing — the previous
+  # generation of this repository had exactly such a check, comparing imports
+  # against a denylist that did not contain the frameworks it was meant to
+  # exclude, so it passed while proving nothing.
+  #
+  # This job writes a deliberately illegal file and asserts the linter rejects
+  # it. If someone drops `domainPurity` from the shared config, this goes red.
+  guard:
+    name: Prove the domain-purity guard fires
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Check formatting
-        run: npm run format:check
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test with coverage
-        run: npm run test:ci
-
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage/
-          retention-days: 7
-
-      - name: Build
-        run: npm run build
-
-  # Dependency review only works on pull_request events, so it is its own job
-  # rather than a step that would be skipped on push.
-  audit:
-    name: Dependency audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      # Fails the build on a high-severity advisory in a production dependency.
-      # Dev-only advisories are reported but not blocking — a vulnerability in a
-      # test runner is not a vulnerability in the shipped artifact.
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
-
-      - name: Audit all dependencies (informational)
-        run: npm audit --audit-level=moderate || true
-
-  # Proves the image builds and the containerised app actually serves traffic.
-  # A Dockerfile that only compiles is not evidence of a working deployment.
-  docker:
-    name: Build & smoke-test image
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: verify
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          load: true
-          tags: dice-game-service:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            APP_VERSION=${{ github.sha }}
-            GIT_SHA=${{ github.sha }}
-
-      - name: Smoke test the running container
+      - name: A forbidden import in the domain must fail the lint
+        working-directory: apps/api
         run: |
           set -euo pipefail
-          docker run -d --name dice -p 3000:3000 dice-game-service:ci
+          cat > src/domain/__guard-probe.ts <<'PROBE'
+          import mongoose from 'mongoose';
+          import { Injectable } from '@nestjs/common';
+          import { randomInt } from 'node:crypto';
 
-          echo "Waiting for readiness..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/readyz > /dev/null; then
-              echo "Ready after ${i} attempt(s)."
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "Service never became ready."
-              docker logs dice
-              exit 1
-            fi
-            sleep 1
-          done
+          export const leak = { mongoose, Injectable, randomInt, r: Math.random(), t: Date.now() };
+          PROBE
 
-          echo "Playing a full game through the public API..."
-          GAME_ID=$(curl -sf -X POST http://localhost:3000/api/v1/games \
-            -H 'Content-Type: application/json' \
-            -d '{"playerName":"CI Smoke Test","rounds":3}' \
-            | jq -r '.data.id')
-          test -n "$GAME_ID" && test "$GAME_ID" != "null"
+          if pnpm exec eslint src/domain/__guard-probe.ts; then
+            echo "::error::The domain-purity rule did NOT reject a file importing mongoose, @nestjs/common and node:crypto."
+            rm -f src/domain/__guard-probe.ts
+            exit 1
+          fi
 
-          for _ in 1 2 3; do
-            curl -sf -X POST "http://localhost:3000/api/v1/games/${GAME_ID}/rolls" > /dev/null
-          done
+          echo "Guard fired as expected."
+          rm -f src/domain/__guard-probe.ts
 
-          STATUS=$(curl -sf "http://localhost:3000/api/v1/games/${GAME_ID}" | jq -r '.data.status')
-          test "$STATUS" = "COMPLETED" || { echo "Expected COMPLETED, got ${STATUS}"; exit 1; }
+      - name: The probe must not survive the job
+        run: test ! -f apps/api/src/domain/__guard-probe.ts
 
-          # A 4th roll must be refused.
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            -X POST "http://localhost:3000/api/v1/games/${GAME_ID}/rolls")
-          test "$CODE" = "409" || { echo "Expected 409, got ${CODE}"; exit 1; }
+  dependencies:
+    name: Dependency scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
-          echo "Verifying graceful shutdown honours SIGTERM..."
-          docker stop --timeout 15 dice
-          docker logs dice 2>&1 | grep -q "Drain complete" \
-            || { echo "Container did not drain cleanly."; docker logs dice; exit 1; }
+    steps:
+      - uses: actions/checkout@v4
 
-          echo "Smoke test passed."
+      - uses: pnpm/action-setup@v4
 
-      - name: Container logs on failure
-        if: failure()
-        run: docker logs dice || true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
-      - name: Clean up
-        if: always()
-        run: docker rm -f dice || true
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Advisories only for what actually ships. A dev-only advisory should not
+      # block a merge, and treating it as if it did trains people to ignore the
+      # gate entirely.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+  # Runs only on pull requests — the action has no baseline to diff against on a
+  # plain push.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+# Still to come, with the phases that produce them:
+#   - backend integration tests against a real MongoDB service container (Phase 4)
+#   - frontend component tests (Phase 5)
+#   - Docker build validation for apps/api and apps/web (Phase 6)
+#   - Playwright smoke test of the two-user flow with deterministic dice (Phase 7)
+# These are deliberately absent rather than stubbed: a job that passes because it
+# has nothing to run is worse than a missing one, because it reads as coverage.

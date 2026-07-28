@@ -818,4 +818,3 @@ describe('RollOutcome exhaustiveness', () => {
     expect(() => applyRoll(game(), ALICE.userId, [2, 2], rogue)).toThrow(/Unhandled roll outcome/);
   });
 });
-

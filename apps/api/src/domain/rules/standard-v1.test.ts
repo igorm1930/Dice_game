@@ -224,4 +224,3 @@ describe('standard@1 end to end', () => {
     expect(held.effect).toBe('HELD');
   });
 });
-

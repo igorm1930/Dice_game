@@ -98,6 +98,24 @@ pnpm format:check
 
 Turbo runs these per package; `--filter=@dice-game/api` scopes to one.
 
+## The dependency audit
+
+`pnpm audit --prod --audit-level=high` blocks CI. One advisory is suppressed by
+GHSA id in the root `package.json`:
+
+- **GHSA-mh99-v99m-4gvg** (`brace-expansion`, DoS via unbounded expansion).
+  Reached only through `eslint > minimatch`, so it is a lint-time dependency that
+  never ships. `pnpm why brace-expansion --prod` returns nothing. Not fixable
+  here — it needs ESLint to bump `minimatch`. Remove the entry once it does.
+
+Suppress by id, never by lowering `--audit-level`: dropping the threshold to
+hide one advisory hides every future one too. The audit still prints
+`1 ignored`, so the suppression stays visible.
+
+Note that `--prod` does not reliably scope to production dependencies in a pnpm
+workspace — it flagged this dev-only path — which is why the ignore list is
+needed rather than the flag being sufficient.
+
 ## Docker and pnpm
 
 pnpm's store is symlinked, so `COPY --from=deps /app/node_modules` produces a
