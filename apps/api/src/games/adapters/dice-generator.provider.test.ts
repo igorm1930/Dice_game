@@ -35,6 +35,7 @@ function configFor(env: Record<string, string | undefined>): AppConfig {
   return parseAppConfig({
     JWT_SECRET: 'a-production-secret-of-entirely-sufficient-length',
     CORS_ORIGIN: 'https://dice.example',
+    TRUST_PROXY_HOPS: '1',
     ...env,
   });
 }

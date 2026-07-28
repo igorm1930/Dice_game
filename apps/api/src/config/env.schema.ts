@@ -90,7 +90,7 @@ export const envVarsSchema = z.object({
    * failure mode is asymmetric and severe: too high and a client sets its own
    * `X-Forwarded-For`, minting a fresh rate-limit key for every request.
    */
-  TRUST_PROXY_HOPS: integer().min(0).max(10).default(0),
+  TRUST_PROXY_HOPS: integer().min(0).max(10).optional(),
 
   // ---- Rate limiting ----
   RATE_LIMIT_WINDOW_MS: integer().min(1000).default(60_000),
@@ -175,6 +175,21 @@ export const envSchema = envVarsSchema.superRefine((env, ctx) => {
       path: ['CORS_ORIGIN'],
       message:
         'Refusing to start: CORS_ORIGIN may not be "*" in production. Name the browser origins explicitly.',
+    });
+  }
+
+  // The default of 0 is right locally and wrong behind any proxy, and getting
+  // it wrong fails *closed* rather than open: every request resolves to the
+  // load balancer's address, so all traffic shares one rate-limit bucket and
+  // the service throttles itself. That is a silent outage rather than a
+  // security hole, which is precisely why nothing would catch it. Production
+  // has to state the hop count deliberately.
+  if (env.TRUST_PROXY_HOPS === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['TRUST_PROXY_HOPS'],
+      message:
+        'Refusing to start: TRUST_PROXY_HOPS must be set explicitly in production. Use the number of proxies in front of this service — 1 behind Fly. Leaving it unset keys every client on the load balancer and collapses rate limiting onto a single shared bucket.',
     });
   }
 });
@@ -273,7 +288,9 @@ function toAppConfig(env: EnvVars): AppConfig {
     http: Object.freeze({
       corsOrigins: parseOriginList(env.CORS_ORIGIN),
       bodyLimit: env.BODY_LIMIT,
-      trustProxyHops: env.TRUST_PROXY_HOPS,
+      // Absent means 0, which is correct for local development and for tests.
+      // Production never reaches here without an explicit value.
+      trustProxyHops: env.TRUST_PROXY_HOPS ?? 0,
     }),
     rateLimit: Object.freeze({
       general: Object.freeze({

@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type DomainError,
   GameOverError,
+  HoldNotAvailableError,
   InvalidOpponentError,
   InvalidTargetScoreError,
   NotAParticipantError,
@@ -53,6 +54,7 @@ describe('domain error codes', () => {
     new NotAParticipantError('user-carol'),
     new NotYourTurnError('roll', 1, 0),
     new InvalidTargetScoreError(1, 2, 1000),
+    new HoldNotAvailableError(0),
     new InvalidOpponentError('user-alice'),
     new UnsupportedRulesetError({ id: 'standard', version: 2 }),
   ];

@@ -236,14 +236,35 @@ describe('production refinement: CORS_ORIGIN', () => {
     expect(config.http.trustProxyHops).toBe(1);
   });
 
-  it('reports both production failures at once rather than one at a time', () => {
+  it('reports every production failure at once rather than one at a time', () => {
+    // A boot that fixes one variable only to be refused for the next is a slow
+    // way to learn three things.
     const error = expectRejection({
       NODE_ENV: 'production',
       JWT_SECRET: DEV_JWT_SECRET,
       CORS_ORIGIN: '*',
     });
 
-    expect(error.issues).toHaveLength(2);
+    // `issues` are rendered "PATH: message" strings, so assert on the variable
+    // each one names rather than on a count that says nothing about which.
+    expect(error.issues.map((issue) => issue.split(':')[0]).sort()).toEqual([
+      'CORS_ORIGIN',
+      'JWT_SECRET',
+      'TRUST_PROXY_HOPS',
+    ]);
+  });
+
+  it('refuses a production start that leaves the proxy hop count unstated', () => {
+    // Getting this wrong fails closed: every request resolves to the load
+    // balancer, so the whole service shares one rate-limit bucket and throttles
+    // itself. A silent outage nothing else would catch.
+    const error = expectRejection({
+      NODE_ENV: 'production',
+      JWT_SECRET: 'a-production-secret-of-entirely-sufficient-length',
+      CORS_ORIGIN: 'https://dice.example',
+    });
+
+    expect(error.issues.map((issue) => issue.split(':')[0])).toEqual(['TRUST_PROXY_HOPS']);
   });
 });
 

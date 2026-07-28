@@ -16,6 +16,7 @@ import {
   applyRoll,
   createGame,
   type GameState,
+  requireTurn,
   seatOf,
   startNewGame,
 } from '../domain/game';
@@ -136,9 +137,20 @@ export class GamesService {
    * in. This service never looks at the faces it produced.
    */
   roll(actor: RequestUser, gameId: string, request: RollRequest): Promise<GameView> {
-    return this.applyTransition(actor, gameId, request.expectedRevision, (game, rules) =>
-      applyRoll(game, actor.id, this.dice.rollPair(), rules),
-    );
+    return this.applyTransition(actor, gameId, request.expectedRevision, (game, rules) => {
+      // The turn is checked before the dice are drawn, not after. Passing
+      // `this.dice.rollPair()` as an argument would evaluate it first, so a roll
+      // that `applyRoll` then refused would still have consumed a throw. Against
+      // the CSPRNG that is invisible; against the deterministic generator it
+      // silently shifts every subsequent value in the script, which would make
+      // an end-to-end test fail somewhere far from the request that broke it.
+      //
+      // `applyRoll` checks again — it is pure and cannot trust a caller — and
+      // the second check costs nothing.
+      requireTurn(game, actor.id, 'roll');
+
+      return applyRoll(game, actor.id, this.dice.rollPair(), rules);
+    });
   }
 
   /** Banks the round score. Whether that wins is the domain's call, not ours. */

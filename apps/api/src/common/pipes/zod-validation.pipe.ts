@@ -62,8 +62,13 @@ export class ZodValidationPipe implements PipeTransform<unknown, unknown> {
 /**
  * Field-level detail for the client.
  *
- * Zod issues carry the offending *path* and a reason, never the offending
- * value — so a rejected password or token cannot be echoed back in an error.
+ * Only the path and the machine-readable code are returned.
+ *
+ * Zod's own `message` is deliberately dropped: for `unrecognized_keys` and
+ * `invalid_enum_value` it embeds the submitted input, so a request that put a
+ * secret in the wrong field would have it echoed back in the error body. The
+ * path says which field was wrong and the code says why, which is everything a
+ * client needs and nothing an attacker learns from.
  */
 function describe(error: ZodError, metadata: ArgumentMetadata): Readonly<Record<string, unknown>> {
   return {
@@ -71,7 +76,6 @@ function describe(error: ZodError, metadata: ArgumentMetadata): Readonly<Record<
     issues: error.issues.map((issue) => ({
       path: issue.path.join('.'),
       code: issue.code,
-      message: issue.message,
     })),
   };
 }

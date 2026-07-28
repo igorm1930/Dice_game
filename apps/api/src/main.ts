@@ -7,10 +7,10 @@ import { ConsoleLogger, type INestApplication, Logger, type LogLevel } from '@ne
 import { type CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { NestFactory } from '@nestjs/core';
 import { type NestExpressApplication } from '@nestjs/platform-express';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { mountApiDocs } from './docs';
 import { errorEnvelopeFallback } from './common/http/error-fallback';
 import { DrainState } from './common/lifecycle/drain-state';
 import { APP_CONFIG } from './config/config.module';
@@ -129,6 +129,13 @@ async function bootstrap(): Promise<void> {
   const config = app.get<AppConfig>(APP_CONFIG);
   const { observability } = config;
 
+  /**
+   * Interactive docs are a development and review convenience. In production
+   * they would be seven unauthenticated, unthrottled paths that `PUBLIC_ROUTES`
+   * does not name — see `mountApiDocs`.
+   */
+  const docsEnabled = !config.isProduction;
+
   app.useLogger(
     new ConsoleLogger({
       prefix: observability.serviceName,
@@ -146,11 +153,13 @@ async function bootstrap(): Promise<void> {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          // Swagger UI at /api/docs is the only HTML this service serves, and
-          // it bootstraps itself from an inline script. Everything else here is
-          // JSON, for which CSP does nothing either way.
-          scriptSrc: ["'self'", "'unsafe-inline'"],
-          styleSrc: ["'self'", "'unsafe-inline'"],
+          // Swagger UI bootstraps itself from an inline script, so serving it
+          // costs an `unsafe-inline` relaxation. Production does not serve it,
+          // and therefore does not pay for it — the API is JSON only there, and
+          // a policy that permits inline script for no reason is a policy that
+          // will be inherited by whatever gets added next.
+          scriptSrc: docsEnabled ? ["'self'", "'unsafe-inline'"] : ["'self'"],
+          styleSrc: docsEnabled ? ["'self'", "'unsafe-inline'"] : ["'self'"],
           imgSrc: ["'self'", 'data:'],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
@@ -175,21 +184,7 @@ async function bootstrap(): Promise<void> {
   app.setGlobalPrefix(API_PREFIX);
   app.enableCors(corsOptions(config));
 
-  const document = SwaggerModule.createDocument(
-    app,
-    new DocumentBuilder()
-      .setTitle('Dice Game API')
-      .setDescription(
-        'Server-authoritative two-player dice game. Every rule, every die and every score is decided here.',
-      )
-      .setVersion(observability.serviceVersion)
-      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
-      .build(),
-  );
-
-  SwaggerModule.setup(`${API_PREFIX}/docs`, app, document, {
-    swaggerOptions: { persistAuthorization: true },
-  });
+  mountApiDocs(app, config);
 
   // Routes must exist before the fallback error handler is appended, or it would
   // sit in front of them and never see anything.
