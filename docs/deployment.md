@@ -126,6 +126,8 @@ intent is stated rather than enforced by accident.
 | Vercel deploy                                            | **blocked**: no credentials        |
 | Atlas cluster                                            | **blocked**: none provisioned      |
 | Live URLs                                                | **none exist**                     |
+| Deploy workflow written                                  | YAML parses; retry policy tested   |
+| Deploy workflow executed                                 | **never run** — no credentials     |
 
 The image build cannot complete in the environment this was developed in: the
 egress proxy blocks Alpine's package repository and intercepts the npm registry.
@@ -135,15 +137,47 @@ until CI runs it. That is why `.github/workflows/ci.yml` has a `docker` job: CI
 is the first place the Dockerfile is exercised end to end, and it may well go red
 on its first run.
 
-## Still to build
+## The deploy workflow
 
-A `deploy-api.yml` workflow. The shape it should take, carried from the previous
-generation's hard-won lessons: publish by immutable digest rather than a mutable
-tag, enforce the single-machine invariant before deploying, and gate on a
-post-deploy smoke test that retries 5xx and connection failures across the
-rollout cutover but **never** retries a 4xx.
+`.github/workflows/deploy-api.yml`. Triggered by a push to `main` touching the
+API, or dispatched manually with an `image_digest` to roll back.
 
-One warning from that history: its rollback path gated the entire verify job on
+**Publishing is gated on the full check suite** — format, lint, typecheck, unit
+tests, build, and integration tests against a service-container MongoDB. This is
+where the previous generation failed: it gated its verify job on
 `inputs.image_tag == ''` while build-and-push ran under `always()`, so a
-rollback dispatch ran zero tests and still pushed `latest`. Every path that
-publishes an image must run the full check suite first.
+rollback dispatch ran zero checks and still pushed HEAD, including `latest`.
+Skipping verification for a rollback is defensible — that image was verified
+when it was built. Publishing anyway is not. Here a rollback skips verify **and**
+build; the only path that publishes is the one that verified.
+
+**Deploys by digest, never by tag.** A tag is mutable: deploying `:main` means
+deploying whatever `:main` points at by the time the machine pulls, which need
+not be what this run verified.
+
+**`--ha=false`**, for the reason in the Fly section above.
+
+**The smoke test** waits for three consecutive `/health/ready` successes, checks
+liveness, and asserts `GET /users` answers 401 anonymously — the one assertion
+that would catch a deploy where the global guard stopped being registered, a
+failure this project has already had once. Its retry policy retries 5xx and
+connection failures only, because a 4xx during a rollout is a real answer from a
+real server and retrying it turns a genuine regression into a slow green.
+
+That retry helper had a bug, found by testing it rather than reading it:
+`|| echo 000` appended a second `000` to the one curl had already written via
+`-w`, producing `000000`, which matched neither arm and returned immediately.
+Connection failures were therefore _not_ retried — the exact opposite of the
+intent, during exactly the window it exists for. Verified against a dead port
+before and after the fix, and against a local server for the 503-then-200 and
+never-retry-404 cases.
+
+## Not verified
+
+No runner, no Fly credentials, no deployed app. `flyctl`, the GHCR push and the
+Fly health gate are entirely unexercised, and the image has never been built end
+to end anywhere.
+
+`superfly/flyctl-actions/setup-flyctl@master` is a mutable branch reference that
+executes with `FLY_API_TOKEN` in scope. Inherited from the previous pipeline and
+carried forward knowingly; pin it to a SHA before this is used in anger.
