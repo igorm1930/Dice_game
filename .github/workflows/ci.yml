@@ -106,6 +106,82 @@ jobs:
       - name: The probe must not survive the job
         run: test ! -f apps/api/src/domain/__guard-probe.ts
 
+  # The unit suite runs against hand-written fakes, which is what keeps it fast
+  # and installable-with-nothing — and also what stops it from saying anything
+  # about the persistence adapters. This job is the other half: the API against
+  # a real mongod, pinned to the same `mongo:7.0` a contributor gets from
+  # compose.yaml, so CI and a laptop cannot disagree about server behaviour.
+  #
+  # It deliberately does not `needs: verify`. Chaining it would delay the
+  # slowest signal in the pipeline behind the fastest one, and keeping it
+  # independent means a formatting failure cannot hide a broken adapter.
+  #
+  # Note the current state honestly: `test:integration` still carries
+  # `--passWithNoTests` and the suite is being written, so today this job is
+  # green on nothing. The wiring is what is being landed here; that flag should
+  # come out with the first spec, because a permanently empty-but-green job is
+  # exactly the failure the comment at the foot of this file warns about.
+  integration:
+    name: API integration tests against MongoDB
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      # GitHub publishes a service container's port into the job's own network
+      # namespace, so the connection string below is the one a contributor
+      # already uses locally — there is no host-name indirection to get wrong.
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        # mongod accepts TCP connections slightly before it will answer
+        # commands. Without a health check the first test would race the
+        # database and fail intermittently, which is the worst failure mode a
+        # gate can have — it trains people to re-run until green. GitHub holds
+        # every step in this job until the container reports healthy, so the
+        # race is prevented rather than retried around.
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The suite is invoked through a pnpm filter rather than turbo, so turbo's
+      # `test:integration -> ^build` edge never applies. The API consumes
+      # `@dice-game/contracts` through that package's built `dist`, so it has to
+      # exist before the first import or every spec dies at collection time with
+      # a resolution error that looks nothing like its cause. `^...` selects the
+      # API's workspace dependencies without rebuilding the API itself.
+      - name: Build the API's workspace dependencies
+        run: pnpm --filter '@dice-game/api^...' run build
+
+      # There is no seed step here, deliberately. `pnpm db:seed` plants two demo
+      # players for a human to log in as; an integration test that leans on them
+      # asserts against fixtures it did not create, and then passes or fails for
+      # reasons that live in another file. Each spec builds what it needs and
+      # owns its own cleanup.
+      - name: Integration tests
+        env:
+          # 127.0.0.1 rather than `localhost`: the published port is IPv4-only,
+          # and a resolver that answers ::1 first turns this into a connection
+          # refused that reads as a broken database.
+          MONGODB_URI: mongodb://127.0.0.1:27017/dice-game
+        run: pnpm --filter @dice-game/api run test:integration
+
   dependencies:
     name: Dependency scan
     runs-on: ubuntu-latest
@@ -144,7 +220,6 @@ jobs:
         with:
           fail-on-severity: high
 # Still to come, with the phases that produce them:
-#   - backend integration tests against a real MongoDB service container (Phase 4)
 #   - frontend component tests (Phase 5)
 #   - Docker build validation for apps/api and apps/web (Phase 6)
 #   - Playwright smoke test of the two-user flow with deterministic dice (Phase 7)
