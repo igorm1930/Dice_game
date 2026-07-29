@@ -149,7 +149,7 @@ unthrottled documentation paths hiding in exactly that gap.
 | 7. Browser end-to-end           | done — 5 scenarios, deterministic dice                                                 |
 | 8. Security hardening           | done inline; three gaps named in [docs/security.md](docs/security.md)                  |
 | 9. Documentation                | done                                                                                   |
-| 10. Final audit                 | not started                                                                            |
+| 10. Final audit                 | done — [final validation report](docs/final-validation-report.md): **PARTIAL PASS**    |
 
 Working conventions, invariants and the gotchas that produced them:
 [AGENTS.md](AGENTS.md).
