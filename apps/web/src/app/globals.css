@@ -1,0 +1,128 @@
+@import 'tailwindcss';
+
+/* Only this app's sources contain class names. Stated explicitly so the scan
+   does not depend on where in the monorepo the build was started from. */
+@source "../";
+
+/* Tailwind v4 keeps design tokens in CSS, not in a JavaScript config file.
+   Every colour the UI uses is named here once. */
+@theme {
+  --color-canvas: #080d1c;
+  --color-surface: #111a33;
+  --color-raised: #18244a;
+  --color-line: #2a3a68;
+  --color-ink: #eef3ff;
+  --color-subtle: #9fb0dc;
+  --color-accent: #8093ff;
+  --color-accent-strong: #5b6ef5;
+  --color-active: #34d399;
+  --color-danger: #fb7185;
+  --color-gold: #fbbf24;
+
+  /* The focus colour is deliberately not one of the two accents: a focus ring
+     that matches a button's own fill is a focus ring nobody can see. */
+  --color-focus: #ffd233;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background:
+      radial-gradient(1100px 600px at 15% -10%, #1b2a5c 0%, transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, #10304a 0%, transparent 55%),
+      var(--color-canvas);
+    background-attachment: fixed;
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    min-height: 100vh;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * The focus ring.
+   *
+   * A default for *every* focusable element, not only the ones somebody
+   * remembered. The components below also carry explicit `focus-visible`
+   * utilities; this rule is the floor beneath them, so a control added later
+   * without those classes is still visibly focusable. The previous generation
+   * of this UI shipped focus styling on three text inputs and no buttons.
+   * ------------------------------------------------------------------ */
+  :where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex='-1'])):focus-visible {
+    outline: 3px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+
+  /* Keyboard users must be able to see where they are even inside a scrolled
+     panel. */
+  :where(a, button, input, select, textarea) {
+    scroll-margin: 1.5rem;
+  }
+}
+
+/* The skip link is off-screen until it is focused. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 50;
+}
+
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+}
+
+/* ---------------------------------------------------------------- *
+ * Dice animation.
+ *
+ * Presentation only. It is started by `effect === 'DOUBLE_SIX'` arriving from
+ * the server and it changes nothing about the game.
+ * ---------------------------------------------------------------- */
+@keyframes die-tumble {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  25% {
+    transform: rotate(-18deg) scale(1.08);
+  }
+  50% {
+    transform: rotate(14deg) scale(0.95);
+  }
+  75% {
+    transform: rotate(-8deg) scale(1.05);
+  }
+  100% {
+    transform: rotate(0deg) scale(1);
+  }
+}
+
+@keyframes bust-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(251 113 133 / 0);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgb(251 113 133 / 0.35);
+  }
+}
+
+.die-tumbling {
+  animation: die-tumble 520ms ease-in-out 3;
+}
+
+.bust-flashing {
+  animation: bust-flash 800ms ease-in-out 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .die-tumbling,
+  .bust-flashing {
+    animation: none;
+  }
+}

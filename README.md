@@ -30,7 +30,7 @@ API returns.
 ```
 apps/
   api/          NestJS. All game rules, all state.        ← domain + API done
-  web/          Next.js App Router.                        ← not started
+  web/          Next.js App Router. Renders, never decides.  ← done
 packages/
   contracts/    Zod schemas + types. The wire contract.   ← frozen
   eslint-config/
@@ -42,11 +42,11 @@ packages/
 ```bash
 pnpm install --frozen-lockfile
 docker compose up -d          # MongoDB
-pnpm test                     # 380 tests
-pnpm dev                      # API on :3001
+SEED_DEMO_USERS=true pnpm db:seed
+pnpm dev                      # API :3001, web :3000
+pnpm test                     # 433 tests
+pnpm test:integration         # 64 more, against real MongoDB
 ```
-
-The API is complete and authenticated. The web client arrives in Phase 5.
 
 ## The design, in one claim
 
@@ -73,6 +73,14 @@ The wire contract makes the frontend structurally unable to cheat:
 - The server sends `effect` (`NORMAL_ROLL` / `DOUBLE_SIX` / `HELD` / `GAME_WON` /
   `NEW_GAME`), so the client animates a double six without ever deciding what one
   is. The effect is named by the ruleset, not by the engine.
+
+The client holds up its end. There is no comparison against a die face, no
+comparison against the winning score, no arithmetic on any score, and no
+`Math.` anywhere in `apps/web/src`. Two things the UI would have liked are
+absent rather than inferred: which seat threw the double six (the view arrives
+with the turn already passed) and any progress indicator toward the target,
+which would be division on scores. Both are reported as contract gaps instead of
+computed locally.
 
 Authorization is default-deny: a global guard protects everything and four
 routes opt out. That is asserted by equality against the contract's

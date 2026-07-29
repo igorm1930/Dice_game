@@ -1,0 +1,16 @@
+{
+  "extends": "@dice-game/typescript-config/nextjs.json",
+  "compilerOptions": {
+    // The shared base emits declarations for the library packages. A Next.js
+    // app never emits anything — `noEmit` is set upstream — so asking for
+    // declaration output here is a contradiction TypeScript rejects.
+    "declaration": false,
+    "declarationMap": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next"]
+}
