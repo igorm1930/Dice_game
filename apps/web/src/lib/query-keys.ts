@@ -24,6 +24,7 @@ import { type SeatId } from './seats';
 export const queryKeys = {
   gameRoot: (gameId: string) => ['game', gameId] as const,
   game: (gameId: string, seat: SeatId, userId: string) => ['game', gameId, seat, userId] as const,
+  usersRoot: () => ['users'] as const,
   users: (seat: SeatId, userId: string) => ['users', seat, userId] as const,
 };
 

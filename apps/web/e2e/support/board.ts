@@ -142,26 +142,27 @@ export async function registerSeat(
 }
 
 /**
- * Puts two brand-new players in the two seats.
+ * Puts two brand-new players in the two seats, **Seat A first**.
  *
- * **Seat B registers first, and the order is load-bearing.** The opponent picker
- * is `GET /api/users`, fetched with Seat A's token and keyed on Seat A's
- * identity, so it runs the moment Seat A signs in and nothing invalidates it
- * afterwards. Register Seat A first and the account created at Seat B a moment
- * later is not in the list that was already fetched — the picker offers nobody
- * to play against, and the only ways out are a refresh or a window blur.
+ * The order used to be the other way round, and it was load-bearing. The
+ * opponent picker is `GET /api/users`, fetched with Seat A's token and keyed on
+ * Seat A's identity, and nothing invalidated it when the other seat signed in —
+ * so registering at Seat A and then at Seat B left the picker offering nobody
+ * to play against, with no way forward but a refresh. This suite ran B-then-A
+ * and never hit it.
  *
- * That is a defect in the client rather than in this suite: the panel should
- * refetch when the other seat signs in. It is recorded here because the order
- * below is the only reason these tests do not hit it, and somebody rearranging
- * them deserves to know why they suddenly cannot start a match.
+ * `signIn` in `seat-sessions.tsx` now invalidates the user list whenever any
+ * seat signs in, so the order is free. It runs A first deliberately: that is the
+ * order somebody reading the page left to right will use, and running it here
+ * means the suite exercises the case that was broken rather than stepping around
+ * it.
  */
 export async function seatBothPlayers(
   page: Page,
   players: { A: PlayerCredentials; B: PlayerCredentials },
 ): Promise<void> {
-  await registerSeat(page, 'B', players.B);
   await registerSeat(page, 'A', players.A);
+  await registerSeat(page, 'B', players.B);
 }
 
 /** Signs an existing account into a seat through that seat's own form. */

@@ -13,7 +13,7 @@ import {
 } from 'react';
 
 import { fetchMe, logout } from '@/lib/api';
-import { belongsToSeat } from '@/lib/query-keys';
+import { belongsToSeat, queryKeys } from '@/lib/query-keys';
 import { SEAT_IDS, type SeatId } from '@/lib/seats';
 import {
   clearSeatSession,
@@ -120,17 +120,31 @@ export function SeatSessionsProvider({ children }: { children: ReactNode }): Rea
     };
   }, []);
 
-  const signIn = useCallback((seat: SeatId, session: AuthSession) => {
-    // Only the token and the two fields the UI renders. The email the server
-    // returned is not stored, and a password never reaches this function.
-    const stored: StoredSeatSession = {
-      accessToken: session.accessToken,
-      user: { id: session.user.id, displayName: session.user.displayName },
-    };
+  const signIn = useCallback(
+    (seat: SeatId, session: AuthSession) => {
+      // Only the token and the two fields the UI renders. The email the server
+      // returned is not stored, and a password never reaches this function.
+      const stored: StoredSeatSession = {
+        accessToken: session.accessToken,
+        user: { id: session.user.id, displayName: session.user.displayName },
+      };
 
-    writeSeatSession(seat, stored);
-    setSeats((current) => ({ ...current, [seat]: { status: 'signed-in', session: stored } }));
-  }, []);
+      writeSeatSession(seat, stored);
+      setSeats((current) => ({ ...current, [seat]: { status: 'signed-in', session: stored } }));
+
+      // Somebody arriving at one seat can be the opponent the *other* seat is
+      // looking for, and the opponent list is fetched once with the creating
+      // seat's token and keyed on that seat's identity — so nothing about this
+      // seat's sign-in would otherwise invalidate it. Create an account at
+      // Seat A and then one at Seat B and the picker stays empty, with no way
+      // forward but a refresh.
+      //
+      // Invalidated at the root rather than for one key: the list belongs to
+      // whichever seat is creating the match, which is not necessarily this one.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.usersRoot() });
+    },
+    [queryClient],
+  );
 
   /**
    * Drops a seat.

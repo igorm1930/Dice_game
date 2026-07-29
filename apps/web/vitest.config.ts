@@ -23,6 +23,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     restoreMocks: true,
+    // Must exceed `asyncUtilTimeout` in vitest.setup.ts. At the default 5000 the
+    // two are equal, so a `findBy*` that never resolves kills the test before
+    // Testing Library can report *what* it was looking for — every real failure
+    // arrives as a bare "Test timed out" instead of a query and a DOM dump.
+    testTimeout: 15_000,
     // `installFakeApi` stubs `globalThis.fetch`; this puts the real one back
     // between tests so a suite cannot leak a fake into the next one.
     unstubGlobals: true,

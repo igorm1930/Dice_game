@@ -16,7 +16,16 @@ import {
   installFakeApi,
   ok,
 } from '@/test/fake-api';
-import { ADA, GAME_ID, gameView, GRACE, LINUS, TOKEN_A, TOKEN_B } from '@/test/fixtures';
+import {
+  ADA,
+  authSession,
+  GAME_ID,
+  gameView,
+  GRACE,
+  LINUS,
+  TOKEN_A,
+  TOKEN_B,
+} from '@/test/fixtures';
 import { renderPage, seatAlreadySignedIn } from '@/test/render';
 
 /** Both seats restored from storage, and the opponent list served. */
@@ -54,6 +63,53 @@ describe('starting a match', () => {
     expect(screen.getByRole('option', { name: 'Linus' })).toBeInTheDocument();
     // Ada is Seat A, the creator. The server would answer INVALID_OPPONENT.
     expect(screen.queryByRole('option', { name: 'Ada' })).not.toBeInTheDocument();
+  });
+
+  /**
+   * The roster is fetched once, with Seat A's token, the moment Seat A signs in.
+   * Nothing invalidated it afterwards — so a reviewer who creates an account at
+   * Seat A and *then* one at Seat B was offered an empty picker and had no way
+   * forward but a refresh. The order that happens to work (B before A) is the
+   * order the e2e suite uses, which is exactly why this went unnoticed.
+   */
+  it('picks up a player who signed in at the other seat after the list was fetched', async () => {
+    const api = installFakeApi();
+    const roster: UserSummary[] = [ADA];
+
+    api.route('GET', ROUTES.auth.me, (request) =>
+      request.token === TOKEN_A
+        ? ok({ ...ADA, email: 'ada@example.com' })
+        : fail('UNAUTHENTICATED'),
+    );
+
+    api.route('GET', ROUTES.users.list, () =>
+      ok({ items: [...roster], total: roster.length, limit: 25, offset: 0, hasMore: false }),
+    );
+
+    // Grace exists only from the moment she signs in, as she would in reality.
+    api.route('POST', ROUTES.auth.login, () => {
+      if (!roster.includes(GRACE)) {
+        roster.push(GRACE);
+      }
+
+      return ok(authSession(GRACE, TOKEN_B));
+    });
+
+    seatAlreadySignedIn('A', ADA, TOKEN_A);
+
+    const { user } = renderPage();
+
+    // Ada is alone: the picker has nobody to offer.
+    expect(await screen.findByText(/yours is the only account/i)).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Grace' })).not.toBeInTheDocument();
+
+    const seatB = within(screen.getByRole('region', { name: 'Seat B' }));
+
+    await user.type(seatB.getByLabelText('Email'), 'grace@example.com');
+    await user.type(seatB.getByLabelText('Password'), 'correct-horse-battery');
+    await user.click(seatB.getByRole('button', { name: 'Sign in as Seat B' }));
+
+    expect(await screen.findByRole('option', { name: 'Grace' })).toBeInTheDocument();
   });
 
   it('takes its winning-score bounds and default from the contract', async () => {
