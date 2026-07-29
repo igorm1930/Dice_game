@@ -29,7 +29,7 @@ API returns.
 
 ```
 apps/
-  api/          NestJS. All game rules, all state.        ← domain layer done
+  api/          NestJS. All game rules, all state.        ← domain + API done
   web/          Next.js App Router.                        ← not started
 packages/
   contracts/    Zod schemas + types. The wire contract.   ← frozen
@@ -42,10 +42,11 @@ packages/
 ```bash
 pnpm install --frozen-lockfile
 docker compose up -d          # MongoDB
-pnpm test                     # 130 tests
+pnpm test                     # 380 tests
+pnpm dev                      # API on :3001
 ```
 
-`pnpm db:seed` and `pnpm dev` arrive with the API in Phase 3.
+The API is complete and authenticated. The web client arrives in Phase 5.
 
 ## The design, in one claim
 
@@ -73,17 +74,24 @@ The wire contract makes the frontend structurally unable to cheat:
   `NEW_GAME`), so the client animates a double six without ever deciding what one
   is. The effect is named by the ruleset, not by the engine.
 
+Authorization is default-deny: a global guard protects everything and four
+routes opt out. That is asserted by equality against the contract's
+`PUBLIC_ROUTES`, at two levels — the controllers Nest registers, and the Express
+router itself. The second exists because Swagger mounts on the raw adapter, so
+it is invisible to the first; a security review found seven unauthenticated,
+unthrottled documentation paths hiding in exactly that gap.
+
 ## Phase status
 
-| Phase                               | State                                        |
-| ----------------------------------- | -------------------------------------------- |
-| 1. Foundation + frozen contract     | done                                         |
-| 2. Domain engine + rules policy     | done — 115 tests                             |
-| 3. Auth + API                       | not started                                  |
-| 4. MongoDB persistence              | not started                                  |
-| 5. Next.js client                   | not started                                  |
-| 6. Docker + CI/CD                   | CI ported to pnpm; images and deploy pending |
-| 7–10. Tests, hardening, docs, audit | not started                                  |
+| Phase                               | State                                 |
+| ----------------------------------- | ------------------------------------- |
+| 1. Foundation + frozen contract     | done                                  |
+| 2. Domain engine + rules policy     | done — 115 tests                      |
+| 3. Auth + API                       | done — reviewed, 380 tests total      |
+| 4. MongoDB persistence              | in progress                           |
+| 5. Next.js client                   | not started                           |
+| 6. Docker + CI/CD                   | CI on pnpm; images and deploy pending |
+| 7–10. Tests, hardening, docs, audit | not started                           |
 
 Working conventions, invariants and the gotchas that produced them:
 [AGENTS.md](AGENTS.md).
