@@ -4,11 +4,11 @@ A two-player dice game where **the backend owns every rule**. Two authenticated
 players share one page; the React client sends commands and renders whatever the
 API returns.
 
-> **Rebuild in progress.** This branch is being rebuilt as a pnpm monorepo on
-> NestJS + MongoDB + Next.js. The domain engine and the wire contract are done;
-> the API, the client, and the deployment pipeline are not. Phase status is at
-> the bottom. The previous Express implementation was removed in this branch and
-> remains in git history.
+> **Not deployed.** The application is complete and tested — 433 unit tests, 64
+> integration tests against a real MongoDB — but no Fly app, Vercel project or
+> Atlas cluster exists, so there is no live URL yet. End-to-end browser tests are
+> still outstanding. See [docs/deployment.md](docs/deployment.md) for exactly
+> what is verified and what is blocked.
 
 ## Rules
 
@@ -24,6 +24,40 @@ API returns.
 - Winning score defaults to **100**, configurable per game (2–1000).
 - Either player may start a new game **at any time**. Win counts survive; scores
   do not.
+
+## Every requirement, and where it is enforced
+
+One row per mandatory requirement: what enforces it, and what proves it. Nothing
+in this table is aspirational — each test named here exists and passes.
+
+| Requirement                                 | Enforced by                                                                                                    | Proved by                                                                                                                                                   |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| React frontend                              | [`apps/web`](apps/web) — Next.js 15 App Router                                                                 | 44 tests                                                                                                                                                    |
+| Backend API                                 | [`apps/api`](apps/api) — NestJS                                                                                | 374 tests + 64 integration                                                                                                                                  |
+| Authentication                              | [`auth.service.ts`](apps/api/src/auth/auth.service.ts), Argon2id + JWT                                         | [`auth.service.test.ts`](apps/api/src/auth/auth.service.test.ts), [`auth.integration.spec.ts`](apps/api/src/auth/auth.integration.spec.ts)                  |
+| Only authenticated users may create or play | Global `APP_GUARD`; four routes opt out via `@Public()`                                                        | [`app.routes.test.ts`](apps/api/src/app.routes.test.ts) — asserts the public set **equals** `PUBLIC_ROUTES`, at controller _and_ Express-router level       |
+| Two authenticated users on one page         | [`seat-sessions.tsx`](apps/web/src/hooks/seat-sessions.tsx) — independent state machine and token per seat     | [`auth.test.tsx`](apps/web/src/app/auth.test.tsx) — token separation asserted on individual requests' `Authorization` headers                               |
+| Backend manages player identities           | [`jwt-auth.guard.ts`](apps/api/src/auth/guards/jwt-auth.guard.ts) — identity only from the verified token      | [`jwt-auth.guard.test.ts`](apps/api/src/auth/guards/jwt-auth.guard.test.ts)                                                                                 |
+| Backend owns all game state                 | [`domain/game.ts`](apps/api/src/domain/game.ts) — pure transitions over frozen state                           | [`game.test.ts`](apps/api/src/domain/game.test.ts) — 74 tests                                                                                               |
+| Backend enforces the rules                  | [`standard-v1.ts`](apps/api/src/domain/rules/standard-v1.ts) — the only file that knows what a bust is         | [`standard-v1.test.ts`](apps/api/src/domain/rules/standard-v1.test.ts)                                                                                      |
+| Membership validated                        | `requireTurn` → `NOT_A_PARTICIPANT`; reads are members-only too                                                | [`game.test.ts`](apps/api/src/domain/game.test.ts) `requireTurn check order`                                                                                |
+| Turns validated                             | `requireTurn` → `NOT_YOUR_TURN`                                                                                | same, plus [`games.integration.spec.ts`](apps/api/src/games/games.integration.spec.ts)                                                                      |
+| Two dice, generated server-side             | [`crypto-dice.generator.ts`](apps/api/src/games/adapters/crypto-dice.generator.ts) — `node:crypto` `randomInt` | [`dice-generator.provider.test.ts`](apps/api/src/games/adapters/dice-generator.provider.test.ts) — asserts production never resolves the scripted generator |
+| Normal roll adds **both** dice              | `evaluateRoll` → `ADD_TO_ROUND` with the sum                                                                   | [`standard-v1.test.ts`](apps/api/src/domain/rules/standard-v1.test.ts) — all 36 pairs                                                                       |
+| Roll repeatedly during a turn               | `applyRoll` leaves the turn where it is                                                                        | `accumulates across consecutive throws by the same player`                                                                                                  |
+| **6 and 6** loses the round score           | `evaluateRoll` → `LOSE_ROUND_AND_PASS`                                                                         | `6 and 6 produces LOSE_ROUND_AND_PASS`; a single six is ordinary                                                                                            |
+| **6 and 6** passes the turn                 | `applyRoll` applies the outcome                                                                                | `clears the round score and switches player` — asserted via a stand-in ruleset, so it tests the engine, not the rule                                        |
+| Hold banks, resets, passes                  | `applyHold`                                                                                                    | `banks the round score and passes the turn`                                                                                                                 |
+| First to reach **or exceed** wins           | `rules.hasWon`, checked on hold only                                                                           | `accumulates across turns until someone reaches the winning score`                                                                                          |
+| Default winning score 100                   | `standardRulesV1.defaultWinningScore`                                                                          | `uses the ruleset default winning score when none is given`                                                                                                 |
+| Custom winning score                        | `createGame`, frozen for the match                                                                             | `accepts a custom winning score`, plus bounds rejection                                                                                                     |
+| New Game at any time                        | `startNewGame` — legal mid-match, preserves win counts                                                         | `is legal during an active game`, `preserving win counts`                                                                                                   |
+| **No game logic in React**                  | Nothing to enforce — the absence is the property                                                               | `grep -rn "Math\." apps/web/src` → nothing; no die-face or `winningScore` comparison; no score arithmetic                                                   |
+
+Two features were **dropped rather than computed** to keep that last row true: a
+progress bar toward the target (division on scores) and naming who threw the
+double six (not derivable from a view that arrives with the turn already
+passed).
 
 ## Layout
 
