@@ -116,11 +116,10 @@ jobs:
   # slowest signal in the pipeline behind the fastest one, and keeping it
   # independent means a formatting failure cannot hide a broken adapter.
   #
-  # Note the current state honestly: `test:integration` still carries
-  # `--passWithNoTests` and the suite is being written, so today this job is
-  # green on nothing. The wiring is what is being landed here; that flag should
-  # come out with the first spec, because a permanently empty-but-green job is
-  # exactly the failure the comment at the foot of this file warns about.
+  # This job once carried `--passWithNoTests` while the suite was being written,
+  # and said so here so that a permanently empty-but-green job could not pass for
+  # a real gate. The flag is gone and 64 specs run against a real mongod, which
+  # makes this the strongest check in the pipeline rather than the emptiest.
   integration:
     name: API integration tests against MongoDB
     runs-on: ubuntu-latest

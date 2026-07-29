@@ -4,11 +4,11 @@
 
 | Suite                        | Command                 | Count | Needs   |
 | ---------------------------- | ----------------------- | ----- | ------- |
-| Domain, services, components | `pnpm test`             | 460   | nothing |
+| Domain, services, components | `pnpm test`             | 462   | nothing |
 | API against a real database  | `pnpm test:integration` | 64    | MongoDB |
 | Browser end-to-end           | `pnpm test:e2e`         | 5     | MongoDB |
 
-460 = 374 api + 71 web + 15 contracts.
+462 = 376 api + 71 web + 15 contracts.
 
 The unit suite installs and runs with no database, no browser and no network.
 That is a deliberate property: a suite you can only run after standing something
@@ -91,17 +91,48 @@ so CI and a laptop cannot disagree about server behaviour. They create their own
 fixtures — none depend on `db:seed`, because a test asserting against data it
 did not create passes or fails for reasons in another file.
 
-The concurrency tests are the point. `BarrierGameRepository` holds every reader
-until both have arrived, so both observe the same revision and both run the
-transition before either writes. Exactly one write survives; the other gets
-`GAME_REVISION_CONFLICT`. It asserts three ways that no replay occurred: both
-transitions genuinely ran, the stored revision moved by one, and the stored
-round score reflects one roll.
+The concurrency tests are the point. Here they are plain `Promise.all` against a
+real mongod: two rolls at the same revision, one 200 and one 409, and the stored
+state showing one roll's worth of movement. There are four such tests, plus one
+spanning two separate connections — which is the only place the compare-and-set
+is exercised across processes rather than within one.
 
-That test was itself verified by removing `revision` from the compare-and-set
-filter — both simultaneous rolls then returned 200 instead of 200/409.
+They were themselves verified by removing `revision` from the compare-and-set
+filter, after which both simultaneous rolls returned 200 instead of 200/409.
 
-There are four such tests, plus one spanning two separate connections.
+The **unit** suite covers the same ground more precisely, because it can control
+the interleaving instead of hoping for it. `games.service.test.ts` carries two
+hand-written repository doubles for this: `BarrierGameRepository`, which holds
+every reader until both have arrived so that both observe the same revision, and
+`GatedGameRepository`, which parks one reader mid-flight so a second request can
+land underneath it. The second is there because of a defect the Phase 10 audit
+found.
+
+### The revision the client names, and the revision the state came from
+
+Every concurrency test in this project, at both levels, used to have both
+writers name the **same** `expectedRevision`. That is the case the
+compare-and-set already handles, so the whole set of them agreed with each other
+and none of them could fail for the reason that mattered.
+
+The reason that mattered: `applyTransition` computed the next state from the
+game it had just loaded, but guarded the write with the revision the _client_
+had sent, and never checked that those were the same number. So a client could
+aim a write one revision into the future and have it land the moment somebody
+else created that revision — overwriting their move with a state computed from
+before it. `GatedGameRepository` reproduces it deterministically: a roll aimed at
+revision 2 parks after loading revision 1, a hold banks and moves the game to
+revision 2, and the parked roll lands on top of it. Before the fix that erased
+the bank, took the turn back, and returned 200.
+
+The fix is a revision check in `games.service.ts`, and where it sits is
+load-bearing. It has to run **after** the transition, or a stranger probing a
+guessed game id is told the revision moved — which tells them the game exists and
+is being played. `tells a stranger they are not in the match, not that the
+revision moved` is the fixture that holds it there: Carol is both a non-member
+and wrong about the revision, so the two candidate answers disagree and moving
+the check fails the test. With `expectedRevision: 0`, as the neighbouring tests
+have, they agree and it proves nothing.
 
 ## Frontend tests
 

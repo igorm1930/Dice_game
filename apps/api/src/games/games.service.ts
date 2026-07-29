@@ -176,23 +176,34 @@ export class GamesService {
   /**
    * Load, resolve, transition, compare-and-set. Every write goes through here.
    *
-   * **`expectedRevision` is passed straight to the repository and is not checked
-   * beforehand**, and that is deliberate rather than an omission:
+   * **`expectedRevision` must be the revision the transition was computed from,
+   * and that is checked here.** It guards the compare-and-set below, but the
+   * client chooses it and the state being written comes from whatever this
+   * method loaded — so letting the two differ lets a client aim a write at a
+   * revision that does not exist yet and have it land the moment somebody else
+   * creates it, overwriting their move with one computed from before it. A
+   * participant could bank a score and have the next request erase it. The
+   * compare-and-set cannot catch this: by the time it runs, the document really
+   * is at the revision the client named.
    *
-   *  - One place decides a conflict. A second check here would be a second
-   *    answer to the same question, and the two would eventually disagree.
+   * The check is placed **after** the transition rather than before it, which is
+   * what keeps the two things it has to satisfy from fighting:
+   *
    *  - Checking the revision first would answer `GAME_REVISION_CONFLICT` to a
    *    non-participant probing a stale id, telling a stranger something about a
    *    table they are not sitting at. Running the transition first means the
    *    domain's own ordering — game over, then membership, then turn — decides
    *    what they are told.
+   *  - The compare-and-set stays as well, and is not redundant with this. This
+   *    check closes the gap between the client's number and the loaded state;
+   *    the compare-and-set closes the gap between the load and the write.
    *
-   * A `null` from the repository means somebody wrote between the load and the
-   * update. The action is **not** replayed: replaying is how a double-clicked
-   * Roll becomes two rolls, which is the exact failure the revision exists to
-   * prevent. The client refetches — `GAME_REVISION_CONFLICT` is in the
-   * contract's `REFETCH_ON` set precisely because it is a normal outcome of two
-   * seats sharing one page, not an error to show a user.
+   * Either refusal means somebody wrote between the load and the update. The
+   * action is **not** replayed: replaying is how a double-clicked Roll becomes
+   * two rolls, which is the exact failure the revision exists to prevent. The
+   * client refetches — `GAME_REVISION_CONFLICT` is in the contract's `REFETCH_ON`
+   * set precisely because it is a normal outcome of two seats sharing one page,
+   * not an error to show a user.
    */
   private async applyTransition(
     actor: RequestUser,
@@ -203,6 +214,14 @@ export class GamesService {
     const current = await this.requireGame(gameId);
     const rules = resolveRules(current.ruleset);
     const next = transition(current, rules);
+
+    if (current.revision !== expectedRevision) {
+      throw new ApiError(
+        'GAME_REVISION_CONFLICT',
+        'This game has moved on since you last saw it. Refetch and try again.',
+        { gameId, expectedRevision },
+      );
+    }
 
     const stored = await this.games.updateIfRevisionMatches(gameId, expectedRevision, next);
 

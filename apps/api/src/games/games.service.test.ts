@@ -162,6 +162,66 @@ class BarrierGameRepository implements GameRepository {
   }
 }
 
+/**
+ * A repository that parks one reader mid-flight, so a second request can land
+ * underneath it.
+ *
+ * `BarrierGameRepository` above makes two requests contend at the *same*
+ * revision. This one makes them contend at *different* ones, which is the case
+ * that matters when the revision guarding the write is supplied by the client
+ * rather than read from the document. The held reader has already loaded its
+ * state; whatever is released afterwards writes on top of a document that has
+ * since moved.
+ */
+class GatedGameRepository implements GameRepository {
+  private reads = 0;
+  private release!: () => void;
+  private arrive!: () => void;
+
+  private readonly gate = new Promise<void>((resolve) => {
+    this.release = resolve;
+  });
+
+  /** Resolves once the held reader has loaded and parked. */
+  readonly parked = new Promise<void>((resolve) => {
+    this.arrive = resolve;
+  });
+
+  constructor(
+    private readonly inner: GameRepository,
+    private readonly holdRead: number,
+  ) {}
+
+  async findById(gameId: string): Promise<PersistedGame | null> {
+    const game = await this.inner.findById(gameId);
+
+    this.reads += 1;
+
+    if (this.reads === this.holdRead) {
+      this.arrive();
+      await this.gate;
+    }
+
+    return game;
+  }
+
+  letGo(): void {
+    this.release();
+  }
+
+  create(state: GameState): Promise<PersistedGame> {
+    return this.inner.create(state);
+  }
+
+  updateIfRevisionMatches(
+    gameId: string,
+    expectedRevision: number,
+    next: GameState,
+  ): Promise<PersistedGame | null> {
+    return this.inner.updateIfRevisionMatches(gameId, expectedRevision, next);
+  }
+}
+
 interface Harness {
   readonly service: GamesService;
   readonly repository: InMemoryGameRepository;
@@ -591,6 +651,69 @@ describe('optimistic concurrency', () => {
     expect(stored?.revision).toBe(seeded.revision + 1);
     expect(stored?.roundScore).toBe(oneRoll.roundScore);
     expect(stored?.lastDice).toEqual([...SCRIPTED_THROW]);
+  });
+
+  it('refuses a write whose expectedRevision is not the revision it was computed from', async () => {
+    // The compare-and-set guards on a number the *client* chose, while the state
+    // being written is computed from whatever the server happened to load. If
+    // those two are allowed to differ, a client can aim a write at a revision
+    // that does not exist yet and have it land once somebody else creates it —
+    // overwriting their move with one computed from before it.
+    //
+    // Reads: 1 = the opening roll, 2 = the stale roll (held), 3 = the hold.
+    let gated!: GatedGameRepository;
+    const { service, repository } = harness((real) => {
+      gated = new GatedGameRepository(real, 2);
+
+      return gated;
+    });
+
+    const seeded = await seed(repository, newMatch(GAME_ID));
+
+    await service.roll(ADA, GAME_ID, { expectedRevision: seeded.revision });
+
+    const onTheTable = await repository.findById(GAME_ID);
+
+    // Aimed one revision into the future. It loads the game as it is now, then
+    // parks before writing.
+    const stale = service.roll(ADA, GAME_ID, { expectedRevision: 2 });
+
+    await gated.parked;
+
+    // Meanwhile Ada banks. This is the move that must survive.
+    await service.hold(ADA, GAME_ID, { expectedRevision: 1 });
+
+    const banked = await repository.findById(GAME_ID);
+
+    expect(banked?.revision).toBe(2);
+    expect(banked?.players[0].globalScore).toBe(onTheTable?.roundScore);
+    expect(banked?.activePlayer).toBe(1);
+
+    gated.letGo();
+
+    await expect(stale).rejects.toMatchObject({ code: 'GAME_REVISION_CONFLICT' });
+
+    // And the bank is still there: same banked total, still Grace to play.
+    const after = await repository.findById(GAME_ID);
+
+    expect(after?.players[0].globalScore).toBe(onTheTable?.roundScore);
+    expect(after?.activePlayer).toBe(1);
+    expect(after?.roundScore).toBe(0);
+  });
+
+  it('tells a stranger they are not in the match, not that the revision moved', async () => {
+    // Both refusals are available here — Carol is not a participant *and* her
+    // revision is wrong — so this is the fixture where the ordering is visible.
+    // With `expectedRevision: 0` the two answers agree and the test proves
+    // nothing; the revision check has to sit after the transition, or a stranger
+    // probing an id they guessed learns that the game exists and is being
+    // played.
+    const { service, repository } = harness();
+    await seed(repository, newMatch(GAME_ID));
+
+    await expect(service.roll(CAROL, GAME_ID, { expectedRevision: 99 })).rejects.toMatchObject({
+      code: 'NOT_A_PARTICIPANT',
+    });
   });
 
   it('does not replay the refused action afterwards', async () => {

@@ -60,5 +60,9 @@ I have to break for it to fail?".
 Nothing in this repository is claimed to pass without having been run. Test
 counts, integration results and audit outcomes in the README and commit messages
 are actual output. Where something could not be verified — the container image
-cannot be built behind this environment's proxy, and nothing has run in a real
-browser — it is stated as unverified rather than implied to work.
+cannot be built end to end behind this environment's proxy, and nothing has been
+deployed — it is stated as unverified rather than implied to work.
+
+The browser suite used to be on that list and no longer is: five Playwright
+scenarios run against a production build of both apps, and the README's
+screenshot is written by one of them.
