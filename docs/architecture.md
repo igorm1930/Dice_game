@@ -114,7 +114,9 @@ suite fast and runnable with no database, and they implement the same
 compare-and-set contract Mongo honours.
 
 Swapping is a module binding. No service, controller, mapper or domain file
-changes.
+changes — the ports were the seam and they held. Why the in-memory adapters stay
+rather than being deleted, and the two Mongo defects that only surfaced by
+running it, are in [decision 5](decisions/0005-mongodb-behind-the-ports.md).
 
 ## What is deliberately absent
 
