@@ -20,8 +20,9 @@ export interface PersistedGame extends GameState {
  * Where games live.
  *
  * A **port**: the games module states what it needs and nothing about how.
- * Phase 3 binds {@link InMemoryGameRepository}; Phase 4 binds a Mongoose
- * adapter and no other file changes.
+ * `MongoGameRepository` is bound in production; `InMemoryGameRepository` is what
+ * the service and domain suites run against. Swapping one for the other was a
+ * single line in `games.module.ts` and no other file changed.
  *
  * The shape is chosen for optimistic concurrency now rather than later, because
  * retrofitting it is the kind of change that quietly leaves one write path
@@ -66,7 +67,7 @@ export interface GameRepository {
  * DI token for {@link GameRepository}.
  *
  * ```ts
- * // Phase 4, in the persistence module:
+ * // games.module.ts:
  * { provide: GAME_REPOSITORY, useClass: MongoGameRepository }
  * ```
  */

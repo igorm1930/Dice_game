@@ -9,19 +9,23 @@ import {
 } from '../ports/game-repository.port';
 
 /**
- * The Phase 3 store: a `Map`, and the same optimistic-concurrency contract the
- * Mongo adapter will have to honour.
+ * The in-memory store: a `Map`, and the same optimistic-concurrency contract
+ * `MongoGameRepository` honours.
  *
  * It is a stand-in for persistence, not for the *guard*. `updateIfRevisionMatches`
- * really does compare-and-set here, so the conflict path is exercised by unit
- * tests today rather than first meeting a real race in Phase 4. Because each
- * write is a single synchronous block between `await` points, two interleaved
- * callers genuinely contend: whichever reaches the map first wins and the other
- * is told `null`.
+ * really does compare-and-set here, so the conflict path is exercised by the
+ * unit suite without a database. Because each write is a single synchronous
+ * block between `await` points, two interleaved callers genuinely contend:
+ * whichever reaches the map first wins and the other is told `null`.
+ *
+ * Production binds the Mongo adapter; this one stays because every games-service
+ * test uses it, and requiring a running database to assert "a stale revision is
+ * refused" would be a worse trade than keeping two implementations of a
+ * three-method port in step.
  *
  * State is process-local, so it does not survive a restart and does not work
- * across instances. That is the whole of what Phase 4 replaces; nothing above
- * this file knows the difference.
+ * across instances. That is exactly what the Mongo adapter replaces, and nothing
+ * above this file knows the difference.
  */
 @Injectable()
 export class InMemoryGameRepository implements GameRepository {

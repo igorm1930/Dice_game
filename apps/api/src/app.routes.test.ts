@@ -9,11 +9,13 @@ import { API_PREFIX, PUBLIC_ROUTES, ROUTES } from '@dice-game/contracts';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { THROTTLER_SKIP } from '@nestjs/throttler/dist/throttler.constants';
+import { createConnection } from 'mongoose';
 
 import { AppModule } from './app.module';
 import { mountApiDocs } from './docs';
 import { parseAppConfig } from './config/env.schema';
 import { IS_PUBLIC_KEY } from './common/decorators/public.decorator';
+import { MongoConnection } from './persistence/mongo-connection';
 import {
   CREDENTIALS_RATE_LIMIT,
   RATE_LIMIT_TIER_KEY,
@@ -250,8 +252,39 @@ describe('rate-limit tiers', () => {
  * exactly where an unguarded route hides.
  */
 describe('the Express router', () => {
+  /**
+   * A connection that never dials.
+   *
+   * This suite is about what the router serves, so it must not need a database
+   * to run — the unit suite stays runnable with nothing installed, and the
+   * integration suite is where a real MongoDB belongs. A hand-written fake
+   * rather than a mocking framework, per the testing conventions.
+   *
+   * The `connection` is a genuine mongoose `Connection` created without a URI:
+   * disconnected, no sockets, but able to compile the models the repositories
+   * register during container construction. Replacing that with a bare object
+   * would fail at construction rather than at `init`, which is a worse and less
+   * honest kind of green.
+   */
+  function offlineMongo(): MongoConnection {
+    const fake = {
+      connection: createConnection(),
+      onModuleInit: (): Promise<void> => Promise.resolve(),
+      onApplicationShutdown: (): Promise<void> => Promise.resolve(),
+      ping: (): Promise<boolean> => Promise.resolve(false),
+    } satisfies Pick<
+      MongoConnection,
+      'connection' | 'onModuleInit' | 'onApplicationShutdown' | 'ping'
+    >;
+
+    return fake as unknown as MongoConnection;
+  }
+
   async function servedPathsWith(nodeEnv: string): Promise<readonly string[]> {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(MongoConnection)
+      .useValue(offlineMongo())
+      .compile();
     const app = moduleRef.createNestApplication<NestExpressApplication>();
 
     app.setGlobalPrefix(API_PREFIX);

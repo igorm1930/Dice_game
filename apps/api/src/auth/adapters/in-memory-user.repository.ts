@@ -12,18 +12,24 @@ import {
 import { type UserRecord } from '../user.entity';
 
 /**
- * The Phase 3 user store: two maps and no database.
+ * The in-memory user store: two maps and no database.
  *
- * It exists so authentication is complete and testable before persistence lands.
- * Phase 4 binds a Mongoose adapter to `USER_REPOSITORY` and deletes this file;
- * nothing that depends on the port moves. Three details are here to make that
- * swap uneventful rather than to make the map work:
+ * Production binds `MongoUserRepository` to `USER_REPOSITORY`. This one stays,
+ * and it is not vestigial: the auth service, users service and guard suites all
+ * run against it, so a test of "an unknown email costs what a wrong password
+ * costs" needs no container and no network. Deleting it would put a database in
+ * front of every unit test for no additional coverage.
+ *
+ * Three details keep the two adapters interchangeable rather than merely
+ * making the map work:
  *
  *  - **Ids are 24-character hex**, the shape `idSchema` accepts and MongoDB's
  *    `ObjectId` produces. A `Map` would be happy with `user-1`, and then every
- *    id in every fixture would become invalid the day a real driver arrives.
- *  - **Uniqueness is enforced on write**, mirroring a unique index, so `create`
- *    raises `EmailTakenError` from the same place the real adapter will.
+ *    id in every fixture would have become invalid the day the real driver
+ *    arrived.
+ *  - **Uniqueness is enforced on write**, mirroring the unique index, so
+ *    `create` raises `EmailTakenError` from the same place the Mongo adapter
+ *    does — there from an E11000 the server raised.
  *  - **Records are frozen and replaced, never mutated.** A caller holding a
  *    record cannot change stored state by writing to it, which is the behaviour
  *    a driver gives for free and an object graph does not.

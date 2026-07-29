@@ -4,7 +4,7 @@ import { MODULE_METADATA } from '@nestjs/common/constants';
 import { describe, expect, it } from 'vitest';
 
 import { diceGeneratorProvider } from './adapters/dice-generator.provider';
-import { InMemoryGameRepository } from './adapters/in-memory-game.repository';
+import { MongoGameRepository } from './adapters/mongo-game.repository';
 import { GamesController } from './games.controller';
 import { GamesModule } from './games.module';
 import { GamesService } from './games.service';
@@ -30,10 +30,17 @@ describe('GamesModule', () => {
     expect(providers()).toContain(diceGeneratorProvider);
   });
 
-  it('binds the game repository to the in-memory adapter for now', () => {
+  /**
+   * The binding, not the behaviour — `mongo-game.repository.integration.spec.ts`
+   * proves the compare-and-set against a real server. This asserts the module
+   * actually reaches for it: binding the in-memory adapter in production would
+   * lose every game on restart and make the revision guard process-local, and
+   * both failures are silent until there are two instances.
+   */
+  it('binds the game repository to the Mongo adapter', () => {
     expect(providers()).toContainEqual({
       provide: GAME_REPOSITORY,
-      useClass: InMemoryGameRepository,
+      useClass: MongoGameRepository,
     });
   });
 

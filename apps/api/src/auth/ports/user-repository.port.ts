@@ -4,11 +4,12 @@ import { type UserRecord } from '../user.entity';
  * How this application stores users, stated as five operations and nothing else.
  *
  * A **port**: the auth and users modules say what they need to know, and say
- * nothing about how the answer is obtained. Phase 3 binds
- * `InMemoryUserRepository`; Phase 4 binds a Mongoose adapter to the same token
- * and no consumer changes. Every method is asynchronous for that reason — an
- * in-memory `Map` does not need to be, but a driver does, and a port that is
- * synchronous today cannot be backed by a database tomorrow.
+ * nothing about how the answer is obtained. `MongoUserRepository` is bound in
+ * production; `InMemoryUserRepository` is what the auth, users and guard suites
+ * run against, and binding one instead of the other changed one line in
+ * `auth.module.ts` and no consumer. Every method is asynchronous for that
+ * reason — an in-memory `Map` does not need to be, but a driver does, and a port
+ * that is synchronous today cannot be backed by a database tomorrow.
  */
 
 /** The fields a caller supplies when creating a user; the rest are the store's. */
@@ -55,7 +56,8 @@ export interface UserRepository {
    * @throws {EmailTakenError} when the address is already registered. The check
    * lives here rather than in the service because only the store can make it
    * atomic with the insert; a read-then-write in the service is a race that two
-   * simultaneous registrations win.
+   * simultaneous registrations win. The Mongo adapter maps the server's
+   * duplicate-key error (E11000) on the unique index onto it.
    */
   create(user: NewUser): Promise<UserRecord>;
 

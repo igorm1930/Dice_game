@@ -5,9 +5,10 @@ import { JwtModule, type JwtModuleOptions, type JwtSignOptions } from '@nestjs/j
 
 import { APP_CONFIG, AppConfigModule } from '../config/config.module';
 import { type AppConfig } from '../config/env.schema';
+import { PersistenceModule } from '../persistence/persistence.module';
 import { AccessTokenService } from './access-token.service';
 import { Argon2PasswordHasher } from './adapters/argon2-password-hasher';
-import { InMemoryUserRepository } from './adapters/in-memory-user.repository';
+import { MongoUserRepository } from './adapters/mongo-user.repository';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -45,13 +46,19 @@ function tokenLifetime(configured: string): NonNullable<JwtSignOptions['expiresI
 }
 
 /**
- * Authentication: the ports, the Phase 3 adapters behind them, and the guard the
- * whole application is protected by.
+ * Authentication: the ports, the adapters behind them, and the guard the whole
+ * application is protected by.
  *
- * Both adapters are bound by token, so Phase 4 replaces
- * `InMemoryUserRepository` with a Mongoose one by editing exactly one line here.
- * Nothing that consumes `USER_REPOSITORY` — this module, the guard, the users
- * module — mentions either adapter.
+ * Both adapters are bound by token, which is why swapping the user store for a
+ * Mongoose one was one line here and nothing anywhere else. Nothing that
+ * consumes `USER_REPOSITORY` — this module, the guard, the users module —
+ * mentions either adapter. `InMemoryUserRepository` stays beside it: the auth,
+ * users and guard suites all run against it, and making them need a database
+ * would trade fast, hermetic tests for no additional coverage.
+ *
+ * `tokenVersion` now lives in MongoDB, so revocation survives a restart — which
+ * it did not in Phase 3, where logging out and bouncing the process handed the
+ * old token back its validity.
  *
  * The exports are what make default-deny work. `app.module.ts` registers
  * `JwtAuthGuard` as a global `APP_GUARD`, and Nest builds that instance in the
@@ -62,6 +69,7 @@ function tokenLifetime(configured: string): NonNullable<JwtSignOptions['expiresI
 @Module({
   imports: [
     AppConfigModule,
+    PersistenceModule,
     JwtModule.registerAsync({
       imports: [AppConfigModule],
       inject: [APP_CONFIG],
@@ -83,7 +91,7 @@ function tokenLifetime(configured: string): NonNullable<JwtSignOptions['expiresI
     AccessTokenService,
     JwtAuthGuard,
     { provide: PASSWORD_HASHER, useClass: Argon2PasswordHasher },
-    { provide: USER_REPOSITORY, useClass: InMemoryUserRepository },
+    { provide: USER_REPOSITORY, useClass: MongoUserRepository },
     {
       /**
        * The throwaway digest the login path verifies against when no account

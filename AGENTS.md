@@ -84,7 +84,7 @@ Preserve these; each is asserted by a test, and each was a deliberate decision:
 ```bash
 pnpm install --frozen-lockfile
 docker compose up -d          # MongoDB
-pnpm db:seed                  # two demo players
+SEED_DEMO_USERS=true pnpm db:seed   # two demo players
 pnpm dev                      # api :3001, web :3000
 
 pnpm lint
@@ -98,6 +98,12 @@ pnpm format:check
 
 Turbo runs these per package; `--filter=@dice-game/api` scopes to one.
 
+`db:seed` refuses unless `SEED_DEMO_USERS=true`, and refuses outright when
+`NODE_ENV=production` — before it opens a connection. `.env.example` ships the
+flag `false` deliberately: seeding is something you ask for, not something that
+happens because you ran a setup command. It is idempotent, so a second run
+leaves existing players untouched.
+
 ## The dependency audit
 
 `pnpm audit --prod --audit-level=high` blocks CI. One advisory is suppressed by
@@ -107,6 +113,14 @@ GHSA id in the root `package.json`:
   Reached only through `eslint > minimatch`, so it is a lint-time dependency that
   never ships. `pnpm why brace-expansion --prod` returns nothing. Not fixable
   here — it needs ESLint to bump `minimatch`. Remove the entry once it does.
+
+One is **fixed** rather than suppressed, via a `pnpm.overrides` entry:
+
+- **GHSA-pm4m-ph32-ghv5** (`js-yaml`, arrived with `@nestjs/swagger`). A patched
+  release existed and `@nestjs/swagger` was already at its latest, so the
+  override pins the transitive dependency forward. Prefer this over an ignore
+  whenever a patched version exists — an ignore is a permanent decision recorded
+  for a temporary problem.
 
 Suppress by id, never by lowering `--audit-level`: dropping the threshold to
 hide one advisory hides every future one too. The audit still prints

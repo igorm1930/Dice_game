@@ -27,6 +27,7 @@
       "cache": false
     },
     "db:seed": {
+      "dependsOn": ["^build"],
       "cache": false,
       "persistent": false
     },

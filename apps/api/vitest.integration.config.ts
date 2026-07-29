@@ -6,8 +6,19 @@ import { defineConfig } from 'vitest/config';
  * infrastructure. Kept in a separate suite because they need MongoDB running
  * and the unit suite must stay runnable with nothing installed.
  *
- * Name them `*.integration.spec.ts`. Phase 3 ships none — `--passWithNoTests`
- * in the script keeps the pipeline green until the first one lands.
+ * Name them `*.integration.spec.ts`, and start the database first:
+ *
+ * ```bash
+ * docker compose up -d     # repository root
+ * pnpm test:integration
+ * ```
+ *
+ * The script no longer passes `--passWithNoTests`. It did while Phase 3 shipped
+ * none of these; now that they exist, "no tests were collected" means the glob
+ * or the suite broke, and that has to be a red pipeline rather than a green one.
+ *
+ * They run against `dice-game-integration-test`, not the development database —
+ * see `src/testing/integration-app.ts`.
  */
 export default defineConfig({
   plugins: [
