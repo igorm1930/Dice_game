@@ -40,8 +40,8 @@ This is verifiable rather than aspirational. Flip `BUST_FACE` in
 `rules/standard-v1.ts` from 6 to 5:
 
 ```
-Test Files  1 failed | 3 passed (4)
-     Tests  5 failed | 110 passed (115)
+Test Files  1 failed | 21 passed (22)
+     Tests  5 failed | 371 passed (376)
 ```
 
 All five failures in `rules/standard-v1.test.ts`. The 74 engine tests pass

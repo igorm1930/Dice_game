@@ -6,6 +6,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "env": ["NEXT_PUBLIC_API_URL"],
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "typecheck": {
@@ -15,25 +16,56 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"],
-      "outputs": ["coverage/**"]
+      "dependsOn": ["^build"]
     },
     "test:integration": {
       "dependsOn": ["^build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["MONGODB_URI", "MONGODB_DB_NAME"]
     },
     "test:e2e": {
       "dependsOn": ["^build"],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": [
+        "E2E_MONGODB_URI",
+        "NEXT_PUBLIC_API_URL",
+        "PLAYWRIGHT_BROWSERS_PATH",
+        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"
+      ]
     },
     "db:seed": {
       "dependsOn": ["^build"],
       "cache": false,
-      "persistent": false
+      "persistent": false,
+      "passThroughEnv": ["MONGODB_URI", "MONGODB_DB_NAME", "SEED_DEMO_USERS"]
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "passThroughEnv": [
+        "ARGON2_MEMORY_KIB",
+        "ARGON2_PARALLELISM",
+        "ARGON2_TIME_COST",
+        "AUTH_RATE_LIMIT_MAX",
+        "AUTH_RATE_LIMIT_WINDOW_MS",
+        "BODY_LIMIT",
+        "CORS_ORIGIN",
+        "HOST",
+        "JWT_EXPIRES_IN",
+        "JWT_SECRET",
+        "LOG_LEVEL",
+        "LOG_PRETTY",
+        "MONGODB_DB_NAME",
+        "MONGODB_URI",
+        "NEXT_PUBLIC_API_URL",
+        "PORT",
+        "RATE_LIMIT_MAX",
+        "RATE_LIMIT_WINDOW_MS",
+        "SERVICE_NAME",
+        "SERVICE_VERSION",
+        "SHUTDOWN_TIMEOUT_MS",
+        "TRUST_PROXY_HOPS"
+      ]
     }
   }
 }

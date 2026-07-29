@@ -98,6 +98,25 @@ pnpm format:check
 
 Turbo runs these per package; `--filter=@dice-game/api` scopes to one.
 
+**Turbo deletes environment variables it was not told about.** Turbo 2 defaults
+to `envMode: strict`, so a task sees `globalEnv` plus its own `env` /
+`passThroughEnv` and nothing else. Two of the commands above were broken by this
+and nobody noticed, because each failed in a way that looked like something
+else: `SEED_DEMO_USERS=true pnpm db:seed` answered _"Refusing to seed:
+SEED_DEMO_USERS is false"_, and `pnpm test:e2e` reported Chromium missing when
+`PLAYWRIGHT_BROWSERS_PATH` had simply been stripped. CI hid both — it runs
+`pnpm --filter @dice-game/web run test:e2e`, which never goes through turbo.
+
+So: adding a variable that a task reads at runtime means adding it to that
+task's `passThroughEnv` in `turbo.json`. Use `env` instead only when the value
+should change the cache key. `turbo run <task> --dry=json` prints what the task
+will actually receive.
+
+Also note `pnpm test --force` does not do what it looks like: `test` is a pnpm
+builtin, so the flag never reaches turbo, and `pnpm run test -- --force` hands it
+to vitest, which rejects it. To defeat the cache use
+`pnpm exec turbo run test --force`.
+
 `db:seed` refuses unless `SEED_DEMO_USERS=true`, and refuses outright when
 `NODE_ENV=production` — before it opens a connection. `.env.example` ships the
 flag `false` deliberately: seeding is something you ask for, not something that

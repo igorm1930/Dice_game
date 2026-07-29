@@ -340,8 +340,28 @@ describe('the revision guard', () => {
 
     const [first, second] = await Promise.all([hold(ada, game.id, 1), hold(ada, game.id, 1)]);
 
-    expect([first.status, second.status].sort((a, b) => a - b)).toEqual([200, 409]);
+    // One applied, one refused — but *which* refusal is a race, and asserting
+    // `[200, 409]` made this test flaky roughly once in ten runs.
+    //
+    // `Promise.all` starts both requests; it does not make them simultaneous. A
+    // hold passes the turn, so if the loser happens to load *after* the winner
+    // committed it no longer has a turn to hold, and the domain refuses it as
+    // `NOT_YOUR_TURN` before the revision is ever consulted. Load first and it
+    // is `GAME_REVISION_CONFLICT`. Both are refusals; neither applied.
+    //
+    // The roll test above does not have this problem, because a normal roll
+    // leaves the turn where it is — the loser is still on move either way.
+    const statuses = [first.status, second.status].sort((a, b) => a - b);
+    const [applied, refused] = first.status === 200 ? [first, second] : [second, first];
 
+    expect(applied.status).toBe(200);
+    expect(statuses[0]).toBe(200);
+    expect([409, 403]).toContain(refused.status);
+    expect(['GAME_REVISION_CONFLICT', 'NOT_YOUR_TURN']).toContain(
+      (refused.body.error as Failure).code,
+    );
+
+    // What the test is really about is below, and it is not timing-dependent.
     const current = await read(ada, game.id);
 
     // Banked once. A replayed hold would have banked an empty round and handed
