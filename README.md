@@ -4,7 +4,7 @@ A two-player dice game where **the backend owns every rule**. Two authenticated
 players share one page; the React client sends commands and renders whatever the
 API returns.
 
-> **Not deployed.** The application is complete and tested — 433 unit tests, 64
+> **Not deployed.** The application is complete and tested — 460 unit tests, 64
 > integration tests against a real MongoDB — but no Fly app, Vercel project or
 > Atlas cluster exists, so there is no live URL yet. End-to-end browser tests are
 > still outstanding. See [docs/deployment.md](docs/deployment.md) for exactly
@@ -32,7 +32,7 @@ in this table is aspirational — each test named here exists and passes.
 
 | Requirement                                 | Enforced by                                                                                                    | Proved by                                                                                                                                                   |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| React frontend                              | [`apps/web`](apps/web) — Next.js 15 App Router                                                                 | 44 tests                                                                                                                                                    |
+| React frontend                              | [`apps/web`](apps/web) — Next.js 15 App Router                                                                 | 71 tests                                                                                                                                                    |
 | Backend API                                 | [`apps/api`](apps/api) — NestJS                                                                                | 374 tests + 64 integration                                                                                                                                  |
 | Authentication                              | [`auth.service.ts`](apps/api/src/auth/auth.service.ts), Argon2id + JWT                                         | [`auth.service.test.ts`](apps/api/src/auth/auth.service.test.ts), [`auth.integration.spec.ts`](apps/api/src/auth/auth.integration.spec.ts)                  |
 | Only authenticated users may create or play | Global `APP_GUARD`; four routes opt out via `@Public()`                                                        | [`app.routes.test.ts`](apps/api/src/app.routes.test.ts) — asserts the public set **equals** `PUBLIC_ROUTES`, at controller _and_ Express-router level       |
@@ -78,7 +78,7 @@ pnpm install --frozen-lockfile
 docker compose up -d          # MongoDB
 SEED_DEMO_USERS=true pnpm db:seed
 pnpm dev                      # API :3001, web :3000
-pnpm test                     # 433 tests
+pnpm test                     # 460 tests
 pnpm test:integration         # 64 more, against real MongoDB
 ```
 
@@ -125,15 +125,18 @@ unthrottled documentation paths hiding in exactly that gap.
 
 ## Phase status
 
-| Phase                               | State                                 |
-| ----------------------------------- | ------------------------------------- |
-| 1. Foundation + frozen contract     | done                                  |
-| 2. Domain engine + rules policy     | done — 115 tests                      |
-| 3. Auth + API                       | done — reviewed, 380 tests total      |
-| 4. MongoDB persistence              | in progress                           |
-| 5. Next.js client                   | not started                           |
-| 6. Docker + CI/CD                   | CI on pnpm; images and deploy pending |
-| 7–10. Tests, hardening, docs, audit | not started                           |
+| Phase                           | State                                                                                  |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| 1. Foundation + frozen contract | done                                                                                   |
+| 2. Domain engine + rules policy | done — reviewed, 115 tests                                                             |
+| 3. Auth + API                   | done — reviewed, 374 tests                                                             |
+| 4. MongoDB persistence          | done — 64 integration tests on real mongod                                             |
+| 5. Next.js client               | done — reviewed, 71 tests                                                              |
+| 6. Docker + CI/CD               | image, Fly config and deploy workflow written; **image never built, nothing deployed** |
+| 7. Browser end-to-end           | in progress                                                                            |
+| 8. Security hardening           | done inline; three gaps named in [docs/security.md](docs/security.md)                  |
+| 9. Documentation                | done                                                                                   |
+| 10. Final audit                 | not started                                                                            |
 
 Working conventions, invariants and the gotchas that produced them:
 [AGENTS.md](AGENTS.md).

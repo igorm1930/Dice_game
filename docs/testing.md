@@ -4,11 +4,11 @@
 
 | Suite                        | Command                 | Count | Needs   |
 | ---------------------------- | ----------------------- | ----- | ------- |
-| Domain, services, components | `pnpm test`             | 433   | nothing |
+| Domain, services, components | `pnpm test`             | 460   | nothing |
 | API against a real database  | `pnpm test:integration` | 64    | MongoDB |
 | Browser end-to-end           | `pnpm test:e2e`         | —     | Phase 7 |
 
-433 = 374 api + 44 web + 15 contracts.
+460 = 374 api + 71 web + 15 contracts.
 
 The unit suite installs and runs with no database, no browser and no network.
 That is a deliberate property: a suite you can only run after standing something
@@ -69,9 +69,20 @@ suite noticed. What that found, in order of severity:
 - The immutability tests only ever passed already-frozen states, so
   `Object.freeze` was doing the work the assertion claimed.
 
+On the client, later, the same shape again: the only `GAME_WON` fixture gave the
+winner the higher score too, so `nameOf(view, view.winner)` could be replaced
+with a score comparison — client-side winner detection — undetected. The fixture
+is now adversarial: the server names a winner who is _not_ leading on the number
+the client can see.
+
 Each is now covered by a test that fails against the mutant that survived it.
 When adding a test for something that matters, the question is not "does it
 pass?" but "what would I have to break for it to fail?".
+
+The habit generalises. Writing the fix for these findings, the agent's own first
+attempt at the live-region test was vacuous — the board normally mounts before
+its data arrives, so the region was empty either way and the mutant survived.
+It noticed because it re-applied the mutant rather than trusting the green.
 
 ## Integration tests
 
@@ -96,8 +107,22 @@ There are four such tests, plus one spanning two separate connections.
 
 React Testing Library over jsdom. The load-bearing assertion is that Roll is
 disabled **because the server said `canRoll: false`**, not because the test
-computed whose turn it is — one seat's view arrives with it true and the other's
-with it false, and both are rendered from the response.
+computed whose turn it is.
+
+That claim was false when it was first written, and the way it failed is the
+most instructive thing in this repository. Every fixture in the original suite
+satisfied `canRoll === canHold === (viewerSeat === activePlayer)`, so a client
+that derived legality locally was indistinguishable from one that read the
+server's answer. Replacing `availableActions.canRoll` with
+`viewerSeat === activePlayer` passed all 44 tests — including the test named
+_"disables Roll because the server said canRoll is false — not because the
+client decided"_.
+
+The suite now contains a `disagree` block: positions where the server's answer
+and whose-turn-it-is come apart. A completed game where it is still nominally
+your turn. One seat with `canRoll: true` and `canHold: false`. `canStartNewGame`
+true while the game is `ACTIVE`. Those fixtures are what make the assertion
+mean what its name says, and all three mutants now die.
 
 Also covered: independent sign-in per seat with token separation asserted on the
 `Authorization` header of individual requests, restoration of a stored session
