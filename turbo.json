@@ -21,12 +21,13 @@
     "test:integration": {
       "dependsOn": ["^build"],
       "cache": false,
-      "passThroughEnv": ["MONGODB_URI", "MONGODB_DB_NAME"]
+      "passThroughEnv": ["MONGODB_URI", "MONGODB_DB_NAME", "DICE_SOURCE"]
     },
     "test:e2e": {
       "dependsOn": ["^build"],
       "cache": false,
       "passThroughEnv": [
+        "DICE_SOURCE",
         "E2E_MONGODB_URI",
         "NEXT_PUBLIC_API_URL",
         "PLAYWRIGHT_BROWSERS_PATH",
@@ -50,6 +51,7 @@
         "AUTH_RATE_LIMIT_WINDOW_MS",
         "BODY_LIMIT",
         "CORS_ORIGIN",
+        "DICE_SOURCE",
         "HOST",
         "JWT_EXPIRES_IN",
         "JWT_SECRET",

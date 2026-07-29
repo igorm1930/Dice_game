@@ -37,13 +37,15 @@ export const INTEGRATION_DB_NAME = 'dice-game-integration-test';
  * Environment for every integration app, applied before the config cache is
  * dropped.
  *
- * `NODE_ENV=test` is load-bearing twice over: it selects the deterministic dice
- * (see `dice-generator.provider.ts`), which is what lets a test assert a double
- * six rather than wait for one, and it keeps the production-only refusals in
- * `env.schema.ts` out of the way.
+ * Two variables, two jobs, and they used to be one. `NODE_ENV=test` keeps the
+ * production-only refusals in `env.schema.ts` out of the way; `DICE_SOURCE` is
+ * what selects the deterministic dice and lets a test assert a double six rather
+ * than wait for one. Asking for the scripted dice by name is the point — see
+ * `dice-generator.provider.ts`.
  */
 function applyIntegrationEnv(): void {
   process.env.NODE_ENV = 'test';
+  process.env.DICE_SOURCE = 'scripted';
   process.env.MONGODB_URI ??= 'mongodb://localhost:27017/dice-game';
   process.env.MONGODB_DB_NAME = INTEGRATION_DB_NAME;
 

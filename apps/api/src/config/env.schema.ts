@@ -37,6 +37,23 @@ export const MIN_PRODUCTION_JWT_SECRET_LENGTH = 32;
 export const NODE_ENVS = ['development', 'test', 'production'] as const;
 export type NodeEnv = (typeof NODE_ENVS)[number];
 
+/**
+ * Where the dice come from.
+ *
+ * Its own variable rather than a consequence of `NODE_ENV`, and that separation
+ * is the whole point. Binding the scripted generator to `NODE_ENV === 'test'`
+ * made one variable answer two unrelated questions — *are the dice predictable*
+ * and *may this process skip every production refusal* — so a single mis-set
+ * value handed out both a known dice sequence and the committed development
+ * `JWT_SECRET` at once. Now `NODE_ENV=test` on a real deployment is still a
+ * serious misconfiguration, but it is one misconfiguration.
+ *
+ * `crypto` is the default, so an unset or unrecognised value lands on real
+ * randomness.
+ */
+export const DICE_SOURCES = ['crypto', 'scripted'] as const;
+export type DiceSource = (typeof DICE_SOURCES)[number];
+
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
@@ -67,6 +84,7 @@ const integer = (): z.ZodNumber => z.coerce.number().int();
 export const envVarsSchema = z.object({
   // ---- Runtime ----
   NODE_ENV: z.enum(NODE_ENVS).default('development'),
+  DICE_SOURCE: z.enum(DICE_SOURCES).default('crypto'),
   PORT: integer().min(1).max(65535).default(3001),
   HOST: z.string().min(1).default('0.0.0.0'),
 
@@ -180,6 +198,20 @@ export const envSchema = envVarsSchema.superRefine((env, ctx) => {
     });
   }
 
+  // Belt as well as braces. `dice-generator.provider.ts` already refuses to bind
+  // the scripted generator outside `scripted`, so this cannot be the only thing
+  // standing between production and predictable dice — it is the thing that says
+  // so *at boot*, by name, instead of leaving an operator to discover it from
+  // the fact that every roll is a 3 and a 4.
+  if (env.DICE_SOURCE === 'scripted') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['DICE_SOURCE'],
+      message:
+        'Refusing to start: DICE_SOURCE=scripted in production would publish every roll in advance — the sequence is committed to this repository. Use "crypto".',
+    });
+  }
+
   if (origins.includes('*')) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -228,6 +260,7 @@ export interface AppConfig {
   readonly nodeEnv: NodeEnv;
   readonly isProduction: boolean;
   readonly isTest: boolean;
+  readonly diceSource: DiceSource;
   readonly port: number;
   readonly host: string;
   readonly mongo: {
@@ -282,6 +315,7 @@ function toAppConfig(env: EnvVars): AppConfig {
     nodeEnv: env.NODE_ENV,
     isProduction: env.NODE_ENV === 'production',
     isTest: env.NODE_ENV === 'test',
+    diceSource: env.DICE_SOURCE,
     port: env.PORT,
     host: env.HOST,
     mongo: Object.freeze({

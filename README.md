@@ -4,7 +4,7 @@ A two-player dice game where **the backend owns every rule**. Two authenticated
 players share one page; the React client sends commands and renders whatever the
 API returns.
 
-> **Tested, and deployable in one command.** 463 unit tests, 64 integration
+> **Tested, and deployable in one command.** 466 unit tests, 64 integration
 > tests against a real MongoDB, 5 Playwright scenarios in a real browser.
 > `compose.prod.yaml` runs the whole application — MongoDB, API, client and Caddy
 > with automatic HTTPS — on a single host. See
@@ -42,7 +42,7 @@ in this table is aspirational — each test named here exists and passes.
 | Requirement                                 | Enforced by                                                                                                    | Proved by                                                                                                                                                   |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | React frontend                              | [`apps/web`](apps/web) — Next.js 15 App Router                                                                 | 72 tests                                                                                                                                                    |
-| Backend API                                 | [`apps/api`](apps/api) — NestJS                                                                                | 376 tests + 64 integration                                                                                                                                  |
+| Backend API                                 | [`apps/api`](apps/api) — NestJS                                                                                | 379 tests + 64 integration                                                                                                                                  |
 | Authentication                              | [`auth.service.ts`](apps/api/src/auth/auth.service.ts), Argon2id + JWT                                         | [`auth.service.test.ts`](apps/api/src/auth/auth.service.test.ts), [`auth.integration.spec.ts`](apps/api/src/auth/auth.integration.spec.ts)                  |
 | Only authenticated users may create or play | Global `APP_GUARD`; four routes opt out via `@Public()`                                                        | [`app.routes.test.ts`](apps/api/src/app.routes.test.ts) — asserts the public set **equals** `PUBLIC_ROUTES`, at controller _and_ Express-router level       |
 | Two authenticated users on one page         | [`seat-sessions.tsx`](apps/web/src/hooks/seat-sessions.tsx) — independent state machine and token per seat     | [`auth.test.tsx`](apps/web/src/app/auth.test.tsx) — token separation asserted on individual requests' `Authorization` headers                               |
@@ -210,7 +210,7 @@ and use **Create account** on each seat instead.
 ### The checks
 
 ```bash
-pnpm test                     # 463 tests, no database or browser needed
+pnpm test                     # 466 tests, no database or browser needed
 pnpm test:integration         # 64 more, against the real MongoDB above
 pnpm test:e2e                 # 5 Playwright scenarios in a real browser
 pnpm build
@@ -273,7 +273,7 @@ unthrottled documentation paths hiding in exactly that gap.
 | ------------------------------- | -------------------------------------------------------------------------------------- |
 | 1. Foundation + frozen contract | done                                                                                   |
 | 2. Domain engine + rules policy | done — reviewed, 116 tests                                                             |
-| 3. Auth + API                   | done — reviewed, 376 tests                                                             |
+| 3. Auth + API                   | done — reviewed, 379 tests                                                             |
 | 4. MongoDB persistence          | done — 64 integration tests on real mongod                                             |
 | 5. Next.js client               | done — reviewed, 72 tests                                                              |
 | 6. Docker + CI/CD               | image, Fly config and deploy workflow written; **image never built, nothing deployed** |

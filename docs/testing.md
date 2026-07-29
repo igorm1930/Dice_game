@@ -4,11 +4,11 @@
 
 | Suite                        | Command                 | Count | Needs   |
 | ---------------------------- | ----------------------- | ----- | ------- |
-| Domain, services, components | `pnpm test`             | 463   | nothing |
+| Domain, services, components | `pnpm test`             | 466   | nothing |
 | API against a real database  | `pnpm test:integration` | 64    | MongoDB |
 | Browser end-to-end           | `pnpm test:e2e`         | 5     | MongoDB |
 
-463 = 376 api + 72 web + 15 contracts.
+466 = 379 api + 72 web + 15 contracts.
 
 The unit suite installs and runs with no database, no browser and no network.
 That is a deliberate property: a suite you can only run after standing something

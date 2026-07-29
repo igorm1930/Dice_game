@@ -130,9 +130,10 @@ export async function alignDice(api: APIRequestContext, scratch: ScratchMatch): 
     if (index === -1) {
       throw new Error(
         `The API threw ${formatPair(view.lastDice)}, which is not in the deterministic script ` +
-          `${DICE_SCRIPT.map(formatPair).join(' ')}. Either NODE_ENV=test did not reach the API — ` +
-          'in which case these are real dice — or the script in ' +
-          'deterministic-dice.generator.ts changed and DICE_SCRIPT here has to change with it.',
+          `${DICE_SCRIPT.map(formatPair).join(' ')}. Either DICE_SOURCE=scripted did not ` +
+          'reach the API — in which case these are real dice and nothing here can hold — or the ' +
+          'script in deterministic-dice.generator.ts changed and DICE_SCRIPT has to change ' +
+          'with it.',
       );
     }
 

@@ -59,7 +59,8 @@ Mongoose. A pattern-based rule fails closed.
 
 Inject what you need through a port. `DiceGenerator` is the reason `Math.random`
 is banned: production uses `node:crypto`, tests use a deterministic sequence, and
-the deterministic one must be unreachable outside tests.
+the deterministic one is bound only by `DICE_SOURCE=scripted`, which production
+refuses outright.
 
 ## Auth invariants
 

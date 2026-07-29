@@ -24,10 +24,13 @@ const repoRoot = path.join(__dirname, '..', '..');
 /**
  * The API, under the environment that binds the scripted dice.
  *
- * `NODE_ENV=test` is the whole reason the assertions in this suite can name a
- * number: it is the one value that resolves `DICE_GENERATOR` to
- * `DeterministicDiceGenerator` — see `dice-generator.provider.ts`, and
- * `e2e/support/dice.ts` for what the suite does with it.
+ * `DICE_SOURCE=scripted` is the reason the assertions in this suite can name a
+ * number: it is what resolves `DICE_GENERATOR` to `DeterministicDiceGenerator`
+ * — see `dice-generator.provider.ts`, and `e2e/support/dice.ts` for what the
+ * suite does with it. `NODE_ENV=test` sits beside it and does a different job:
+ * it keeps the production-only config refusals out of the way. They were one
+ * variable once, which meant a single mis-set value shipped predictable dice and
+ * the development JWT secret together.
  *
  * The rate limits and the Argon2 cost are lowered on purpose. A run registers
  * dozens of accounts in a few minutes, which is exactly what the production
@@ -37,6 +40,7 @@ const repoRoot = path.join(__dirname, '..', '..');
  */
 const apiEnv: Record<string, string> = {
   NODE_ENV: 'test',
+  DICE_SOURCE: 'scripted',
   HOST: '127.0.0.1',
   PORT: String(API_PORT),
   MONGODB_URI: E2E_MONGODB_URI,

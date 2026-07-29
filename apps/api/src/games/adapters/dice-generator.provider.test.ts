@@ -14,7 +14,7 @@ import { diceGeneratorProvider } from './dice-generator.provider';
  * **A test-only cheat that ships is a cheat.**
  *
  * The deterministic generator exists so unit tests and Playwright can script a
- * match. If it were ever bound outside `NODE_ENV=test`, every roll in
+ * match. If it were ever bound outside `DICE_SOURCE=scripted`, every roll in
  * production would be predictable from a file in this repository — and the
  * failure would be silent, because a scripted game plays exactly like a random
  * one until somebody notices the sequence.
@@ -62,18 +62,41 @@ describe('the dice binding', () => {
   });
 
   it('gives a development container the CSPRNG too', async () => {
-    // Only `test` is special. An unrecognised environment would fail validation
-    // before reaching here, but the condition is written so that the *test* case
-    // is the named one — anything else falls through to real randomness.
     const dice = await resolveDice({ NODE_ENV: 'development' });
 
     expect(dice).toBeInstanceOf(CryptoDiceGenerator);
   });
 
-  it('gives a test container the scripted dice', async () => {
+  /**
+   * The fixture the old binding could not express.
+   *
+   * `NODE_ENV=test` used to be the whole condition, so this case did not exist:
+   * asking for the test environment *was* asking for scripted dice. Splitting
+   * `DICE_SOURCE` out makes the two questions disagree, which is the only way to
+   * show that the answer comes from the one that should decide it.
+   */
+  it('gives a test container the CSPRNG unless the dice were asked for by name', async () => {
     const dice = await resolveDice({ NODE_ENV: 'test' });
 
+    expect(dice).toBeInstanceOf(CryptoDiceGenerator);
+  });
+
+  it('gives the scripted dice only to a container that asked for them', async () => {
+    const dice = await resolveDice({ NODE_ENV: 'test', DICE_SOURCE: 'scripted' });
+
     expect(dice).toBeInstanceOf(DeterministicDiceGenerator);
+  });
+
+  it('scripts the dice in development too, when asked — the flag decides, not the environment', async () => {
+    const dice = await resolveDice({ NODE_ENV: 'development', DICE_SOURCE: 'scripted' });
+
+    expect(dice).toBeInstanceOf(DeterministicDiceGenerator);
+  });
+
+  it('refuses to boot production with scripted dice at all', () => {
+    expect(() => configFor({ NODE_ENV: 'production', DICE_SOURCE: 'scripted' })).toThrow(
+      /DICE_SOURCE/,
+    );
   });
 
   it('resolves a generator that actually satisfies the port', async () => {

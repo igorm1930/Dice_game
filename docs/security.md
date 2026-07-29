@@ -110,9 +110,24 @@ a token or a connection string.
 Parsed and validated once at boot; the process refuses to start on invalid
 config rather than failing at the first request. Production additionally
 refuses: the development `JWT_SECRET` committed to `.env.example`, a secret
-under 32 characters, `CORS_ORIGIN=*`, and an unstated `TRUST_PROXY_HOPS`. All
-failures are reported together, so fixing one does not reveal the next on the
-following restart.
+under 32 characters, `CORS_ORIGIN=*`, an unstated `TRUST_PROXY_HOPS`, and
+`DICE_SOURCE=scripted`. All failures are reported together, so fixing one does
+not reveal the next on the following restart.
+
+`DICE_SOURCE` is the newest of those and it exists to split a switch that used to
+do two jobs. The deterministic dice were bound by `NODE_ENV === 'test'`, which
+also disables every production refusal above — so one mis-set variable in a real
+deployment produced predictable dice **and** the committed development secret at
+the same time. They are now independent: `DICE_SOURCE` decides the dice and
+nothing else, production refuses `scripted` outright, and the provider names the
+scripted case so anything unrecognised falls through to `node:crypto`.
+
+Both halves are tested. `dice-generator.provider.test.ts` resolves the binding
+through a real Nest container and asserts that `NODE_ENV=test` **alone** now
+yields the CSPRNG — a case the old condition could not express, because asking
+for the test environment _was_ asking for scripted dice. Removing
+`DICE_SOURCE=scripted` from the e2e configuration makes the browser suite fail
+with the API's real dice and an error that names the missing variable.
 
 Secrets are never committed. `.env.example` contains only ports, bounds and
 durations.
@@ -138,10 +153,6 @@ Stated rather than quietly carried:
 - **Credential rate limiting is per-IP only.** Twenty guesses per fifteen minutes
   per source address; a distributed or NAT-diverse attacker is unbounded. A
   second counter keyed on the submitted email would close it.
-- **`NODE_ENV=test` does two things at once** — it binds the deterministic dice
-  generator _and_ disables the production config refusals. One mis-set variable
-  in a real deploy therefore yields both scriptable dice and the committed dev
-  secret. Two independent switches would require two mistakes.
 - **No refresh tokens.** An expired access token means signing in again.
 - **One suppressed advisory**, by GHSA id with a written reason, in the root
   `package.json`. See AGENTS.md. Advisories with a patched release are pinned
