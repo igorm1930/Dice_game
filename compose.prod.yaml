@@ -1,0 +1,144 @@
+# The whole application on one host.
+#
+#   cp .env.production.example .env.production
+#   # fill in DOMAIN, ACME_EMAIL, MONGO_PASSWORD, JWT_SECRET
+#   docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+#
+# Four containers: MongoDB, the API, the client, and Caddy in front doing TLS.
+# Caddy is the only one that publishes a port. That is the whole security model
+# of this file — everything else talks over the private compose network and is
+# unreachable from the internet, including MongoDB, which is why it can be
+# addressed as `mongo:27017` with no TLS of its own.
+#
+# `compose.yaml` (no suffix) is the *development* database only, and the two do
+# not overlap: this one names its own volumes and its own network so a laptop
+# running both cannot mix their data.
+
+name: dice-game
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+
+    # Authentication is on here and off in compose.yaml, deliberately. The
+    # development database holds seeded demo players on a loopback-bound port;
+    # this one holds real accounts. Credentials come from .env.production, which
+    # is gitignored — see .env.production.example.
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME:?set MONGO_USERNAME in .env.production}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set MONGO_PASSWORD in .env.production}
+      MONGO_INITDB_DATABASE: dice-game
+
+    # No `ports:`. Nothing outside this compose network can reach the database,
+    # so it needs no published port even on loopback.
+    volumes:
+      - mongo-data:/data/db
+
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks: [internal]
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0}
+        GIT_SHA: ${GIT_SHA:-unknown}
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      HOST: 0.0.0.0
+
+      # authSource=admin because the user above is created in the admin
+      # database, not in dice-game. Omit it and every query fails
+      # authentication against a database the user does not exist in.
+      MONGODB_URI: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongo:27017/dice-game?authSource=admin
+
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.production}
+
+      # Same origin as the client, because Caddy puts them both on one host.
+      CORS_ORIGIN: https://${DOMAIN:?set DOMAIN in .env.production}
+
+      # Exactly one proxy sits in front: Caddy. Too high and a client forges
+      # X-Forwarded-For to reset its own rate limit; too low and every request
+      # keys on Caddy's address and one player exhausts everyone's budget.
+      TRUST_PROXY_HOPS: '1'
+
+      SERVICE_VERSION: ${APP_VERSION:-0.0.0}
+
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+    networks: [internal]
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-0.0.0}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        # Empty on purpose: the browser talks to the same origin it loaded from,
+        # and Caddy routes /api to the API. See apps/web/Dockerfile.
+        NEXT_PUBLIC_API_URL: ''
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+
+    depends_on:
+      - api
+
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+
+    # The only published ports in the file. 80 is not optional — it is how
+    # Let's Encrypt answers the HTTP-01 challenge, and without it certificates
+    # never issue.
+    ports:
+      - '80:80'
+      - '443:443'
+
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.production}
+
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Lose this volume and every restart re-requests
+      # from Let's Encrypt, which rate-limits to five per week per domain.
+      - caddy-data:/data
+      - caddy-config:/config
+
+    depends_on:
+      - web
+      - api
+
+    networks: [internal]
+
+volumes:
+  mongo-data:
+    name: dice-game-prod-mongo-data
+  caddy-data:
+    name: dice-game-prod-caddy-data
+  caddy-config:
+    name: dice-game-prod-caddy-config
+
+networks:
+  internal:
+    name: dice-game-prod

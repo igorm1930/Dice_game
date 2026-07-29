@@ -1,22 +1,30 @@
-node_modules
-dist
-coverage
-# dockerignore patterns are root-relative (unlike gitignore), so the nested
-# client artifacts need their own entries — the image builds them fresh.
-client/node_modules
-client/dist
-.git
-.github
-.gitignore
-.dockerignore
-Dockerfile
-docker-compose.yml
-docs
-tests
-*.md
-!README.md
+# The build context is the repository root — see apps/api/Dockerfile.
+#
+# Everything here either bloats the context, invalidates cache layers for no
+# reason, or must never reach an image at all.
+
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+
+# Secrets never enter the context, whatever .gitignore says about them.
 .env
 .env.*
-*.log
-.vscode
-.idea
+!.env.example
+
+.git
+.github
+docs
+test-results
+playwright-report
+
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.integration.spec.ts
+
+*.md
+!README.md

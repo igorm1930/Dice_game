@@ -1,0 +1,12 @@
+{
+  "name": "@dice-game/typescript-config",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "files": [
+    "base.json",
+    "nestjs.json",
+    "nextjs.json",
+    "library.json"
+  ]
+}

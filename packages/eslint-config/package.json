@@ -1,0 +1,25 @@
+{
+  "name": "@dice-game/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    "./base": "./base.js",
+    "./nest": "./nest.js",
+    "./next": "./next.js"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.18.0",
+    "@next/eslint-plugin-next": "^15.1.4",
+    "eslint-config-prettier": "^10.0.1",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.4",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "globals": "^15.14.0",
+    "typescript-eslint": "^8.20.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.18.0"
+  }
+}

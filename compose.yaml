@@ -1,0 +1,60 @@
+# Local development database only.
+#
+# The API (:3001) and the web app (:3000) run on the host under `pnpm dev`, not
+# in this file — a container would add an image rebuild to every edit and buy
+# nothing, because neither app needs an isolated OS to run locally. MongoDB does
+# need one: it is the only dependency a contributor would otherwise have to
+# install by hand.
+#
+# The documented setup path is:
+#
+#   docker compose up -d     # this file — MongoDB on 27017
+#   pnpm db:seed             # two demo players
+#   pnpm dev                 # api :3001, web :3000
+#
+# `db:seed` and the integration tests connect with the MONGODB_URI from
+# .env.example (mongodb://localhost:27017/dice-game), so the published port and
+# the default connection string must stay in agreement.
+#
+# Deployment does not use this file. Production runs on Fly with a managed
+# MongoDB; see docs/deployment.md.
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: dice-game-mongo
+    restart: unless-stopped
+
+    # No authentication, deliberately.
+    #
+    # This database is for local development and for the integration suite. It
+    # holds seeded demo players and throwaway matches, nothing else. Credentials
+    # here would exist only to be committed to the repository — a password in
+    # version control teaches the wrong habit and protects nothing.
+    #
+    # The safety comes from the bind address instead: 127.0.0.1 publishes the
+    # port to the host loopback only, so an unauthenticated mongod is not
+    # reachable from the local network, a coffee-shop Wi-Fi, or a container on
+    # another bridge. Do not change this to `27017:27017`.
+    ports:
+      - '127.0.0.1:27017:27017'
+
+    # Named volume rather than a bind mount: mongod wants ownership of its data
+    # directory, and a host bind mount hands it whatever the host uid/permissions
+    # happen to be. `docker compose down -v` is the intended reset.
+    volumes:
+      - mongo-data:/data/db
+
+    # Compose waits for this before reporting the service healthy, which is what
+    # makes `docker compose up -d && pnpm db:seed` safe to run back to back —
+    # mongod accepts TCP connections a moment before it will answer commands.
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  mongo-data:
+    name: dice-game-mongo-data

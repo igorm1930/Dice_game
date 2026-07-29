@@ -1,0 +1,7 @@
+# Every path has one owner. A single-maintainer repository does not need a
+# routing table — it needs a review request that always reaches somebody.
+#
+# The last matching pattern wins, so a more specific rule added below this line
+# overrides it. Nothing needs one yet.
+
+* @igorm1930
