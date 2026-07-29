@@ -267,11 +267,76 @@ jobs:
           echo "image user: '${user}'"
           test "${user}" = "node"
 
-# Still to come, with the phase that produces it:
-#   - Playwright smoke test of the two-user flow with deterministic dice (Phase 7)
-# Deliberately absent rather than stubbed: a job that passes because it has
-# nothing to run is worse than a missing one, because it reads as coverage.
+  # The only job that drives a real browser. Everything else in this pipeline
+  # asserts against jsdom, a supertest client, or reflection — none of which can
+  # tell you that a keyboard user can complete a turn, or that both seats render
+  # side by side, which is the thing the assignment actually asks for.
+  #
+  # Slow by nature: it builds both apps, starts them, and runs Chromium. It does
+  # not `needs: verify`, for the same reason the integration job does not —
+  # chaining the slowest signal behind the fastest delays it for no benefit.
+  e2e:
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The development environment this suite was written in ships a
+      # pre-installed Chromium; a GitHub runner does not. `--with-deps` also
+      # pulls the shared libraries headless Chromium needs, which are absent
+      # from ubuntu-latest. `@playwright/test` is pinned to an exact version, so
+      # this fetches the one browser revision that release drives.
+      - name: Install Chromium
+        run: pnpm --filter @dice-game/web exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        env:
+          E2E_MONGODB_URI: mongodb://127.0.0.1:27017/dice-game-e2e
+        run: pnpm --filter @dice-game/web run test:e2e
+
+      # The report carries the video of every scenario and the trace of anything
+      # that failed. A red e2e job with no artefact is a job you cannot act on
+      # without reproducing it locally, which defeats the point of running it
+      # here.
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+# Every job this pipeline is meant to have now exists. Two notes on what they do
+# and do not prove:
 #
-# Frontend component tests are NOT missing — `pnpm test` in the verify job runs
-# turbo across every package, so apps/web's suite already runs there. Listing
-# them here as pending would have been the same lie in the other direction.
+#   - Frontend component tests are not a separate job. `pnpm test` in `verify`
+#     runs turbo across every package, so apps/web's suite already runs there.
+#   - The `docker` job builds the API image but does not run it. Running it needs
+#     MongoDB, which `integration` already covers against the same code.
