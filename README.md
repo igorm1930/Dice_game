@@ -4,7 +4,7 @@ A two-player dice game where **the backend owns every rule**. Two authenticated
 players share one page; the React client sends commands and renders whatever the
 API returns.
 
-> **Tested, and deployable in one command.** 462 unit tests, 64 integration
+> **Tested, and deployable in one command.** 463 unit tests, 64 integration
 > tests against a real MongoDB, 5 Playwright scenarios in a real browser.
 > `compose.prod.yaml` runs the whole application — MongoDB, API, client and Caddy
 > with automatic HTTPS — on a single host. See
@@ -41,7 +41,7 @@ in this table is aspirational — each test named here exists and passes.
 
 | Requirement                                 | Enforced by                                                                                                    | Proved by                                                                                                                                                   |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| React frontend                              | [`apps/web`](apps/web) — Next.js 15 App Router                                                                 | 71 tests                                                                                                                                                    |
+| React frontend                              | [`apps/web`](apps/web) — Next.js 15 App Router                                                                 | 72 tests                                                                                                                                                    |
 | Backend API                                 | [`apps/api`](apps/api) — NestJS                                                                                | 376 tests + 64 integration                                                                                                                                  |
 | Authentication                              | [`auth.service.ts`](apps/api/src/auth/auth.service.ts), Argon2id + JWT                                         | [`auth.service.test.ts`](apps/api/src/auth/auth.service.test.ts), [`auth.integration.spec.ts`](apps/api/src/auth/auth.integration.spec.ts)                  |
 | Only authenticated users may create or play | Global `APP_GUARD`; four routes opt out via `@Public()`                                                        | [`app.routes.test.ts`](apps/api/src/app.routes.test.ts) — asserts the public set **equals** `PUBLIC_ROUTES`, at controller _and_ Express-router level       |
@@ -96,6 +96,60 @@ Two features were **dropped rather than computed** to keep that last row true: a
 progress bar toward the target (division on scores) and naming who threw the
 double six (not derivable from a view that arrives with the turn already
 passed).
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph browser["Browser — one page, two seats"]
+        WEB["Next.js client<br/>renders the answer, decides nothing"]
+    end
+
+    subgraph contracts["packages/contracts — the frozen wire"]
+        WIRE["Zod schemas · ROUTES · ERROR_CODES · PUBLIC_ROUTES<br/>both apps infer their types from here"]
+    end
+
+    subgraph api["apps/api — NestJS"]
+        EDGE["APP_GUARD default-deny · ZodValidationPipe<br/>DomainExceptionFilter · rate limiting"]
+        CTRL["Controllers — validate, delegate, return"]
+        SVC["Services — load, resolve ruleset, transition, compare-and-set"]
+        DOM["domain/** — pure<br/>game.ts · rules/standard@1<br/>no framework, driver, clock, env or randomness"]
+        PORT["Ports<br/>GAME_REPOSITORY · USER_REPOSITORY · DICE_GENERATOR<br/>CLOCK · ID_GENERATOR · PASSWORD_HASHER"]
+        ADAPT["Adapters<br/>MongoGameRepository · InMemoryGameRepository<br/>CryptoDiceGenerator · DeterministicDiceGenerator · Argon2"]
+    end
+
+    DB[("MongoDB")]
+
+    WEB -->|"HTTPS + Bearer, one token per seat"| EDGE
+    EDGE --> CTRL
+    CTRL --> SVC
+    SVC --> DOM
+    SVC --> PORT
+    PORT -.->|"bound by Nest DI"| ADAPT
+    ADAPT --> DB
+    WEB -.-> WIRE
+    CTRL -.-> WIRE
+    DOM -.->|"never imports it"| WIRE
+```
+
+Read the arrows into `domain/**`. Services call it; it calls nothing back. It
+imports no framework, no driver, no clock, no environment and no random source —
+not by convention but because `no-restricted-imports` fails the build, and a CI
+job writes a deliberately illegal file each run to prove the rule still fires.
+
+The dotted line from `domain` to the contract is the one worth noticing: the
+domain does **not** import the wire format. Error codes and the winning-score
+bounds are therefore stated twice, and `rules-contract-agreement.test.ts` fails
+the build if the two copies drift. That is the price of keeping the domain free
+of Zod, paid deliberately and guarded.
+
+Ports are Nest DI tokens, and each has more than one adapter that is actually
+used: `GAME_REPOSITORY` resolves to `MongoGameRepository` in production and
+`InMemoryGameRepository` in the unit suite; `DICE_GENERATOR` resolves to
+`node:crypto` in production and a scripted sequence under `NODE_ENV=test`, with
+the default falling to the CSPRNG so an unrecognised environment fails closed.
+Swapping a persistence layer is not a claim here — both implementations exist and
+both are exercised.
 
 ## Layout
 
@@ -156,7 +210,7 @@ and use **Create account** on each seat instead.
 ### The checks
 
 ```bash
-pnpm test                     # 462 tests, no database or browser needed
+pnpm test                     # 463 tests, no database or browser needed
 pnpm test:integration         # 64 more, against the real MongoDB above
 pnpm test:e2e                 # 5 Playwright scenarios in a real browser
 pnpm build
@@ -221,7 +275,7 @@ unthrottled documentation paths hiding in exactly that gap.
 | 2. Domain engine + rules policy | done — reviewed, 116 tests                                                             |
 | 3. Auth + API                   | done — reviewed, 376 tests                                                             |
 | 4. MongoDB persistence          | done — 64 integration tests on real mongod                                             |
-| 5. Next.js client               | done — reviewed, 71 tests                                                              |
+| 5. Next.js client               | done — reviewed, 72 tests                                                              |
 | 6. Docker + CI/CD               | image, Fly config and deploy workflow written; **image never built, nothing deployed** |
 | 7. Browser end-to-end           | done — 5 scenarios, deterministic dice                                                 |
 | 8. Security hardening           | done inline; three gaps named in [docs/security.md](docs/security.md)                  |

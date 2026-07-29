@@ -118,6 +118,79 @@ changes — the ports were the seam and they held. Why the in-memory adapters st
 rather than being deleted, and the two Mongo defects that only surfaced by
 running it, are in [decision 5](decisions/0005-mongodb-behind-the-ports.md).
 
+## Observability
+
+Logging goes through Nest's own `ConsoleLogger` with `json: true` (`main.ts`),
+which emits one structured JSON object per line — level, pid, timestamp, message,
+context — and is filtered by `LOG_LEVEL`. `LOG_PRETTY` switches it to the human
+format for local work.
+
+**Pino and Winston were considered and not adopted.** Nest 11's built-in logger
+already produces structured JSON, honours the framework's own `LoggerService`
+contract, and adds no dependency to an image that ships a native argon2 build
+already. The usual reasons to reach for Pino — JSON output, level filtering,
+redaction — are either present or unneeded here: nothing logs a request body, a
+token or a password anywhere, so there is nothing to redact.
+
+The line worth defending is not the library, it is what is never logged. Error
+paths carry codes and identifiers and never values: `MongoConnectionError` names
+the database and swallows the URI, `EnvValidationError` names the failing
+variables and never prints them, and the Zod pipe drops Zod's `message` so
+submitted input is never echoed into a log or a response. An inbound
+`x-request-id` is allow-listed against a strict pattern before it is adopted as
+the correlation id, because a log line is a place an attacker will try to write.
+
+Swap the logger by passing a different `LoggerService` at `NestFactory.create` —
+one call site, because nothing in the codebase calls `console.log` directly.
+
+## Caching, and why there is none
+
+No Redis, no in-process cache, no HTTP cache headers on game reads. That is a
+decision, and it is the right one at this size — but the shape of the answer
+matters more than the answer.
+
+**Every read in this application is a single document fetched by `_id`.** A game
+view is one `findById` against a collection with a primary-key index, and it is
+per-viewer: `availableActions` and `viewerSeat` are computed relative to whoever
+asked, so two seats reading the same game get two different payloads. Putting
+Redis in front of that would add a network hop and a coherence problem to
+replace an indexed point lookup. It would make the system slower and less
+correct.
+
+**The write path is why a cache would be actively dangerous here.** Correctness
+rests on a compare-and-set: `findOneAndUpdate({ _id, revision }, ...)`, which is
+atomic _in MongoDB_. A cache in front of reads means a client can be handed a
+stale `revision`, and a stale revision is not a stale render — it is a write that
+gets refused, or worse, one that is accepted against a state the caller never
+saw. Any cache added here has to be invalidated by the same write that
+increments the revision, in the same transaction, or it must not exist.
+
+### Where it would go, if it were needed
+
+The pressure would not come from gameplay. It would come from reads that are
+shared, expensive and tolerant of being slightly stale — none of which describe a
+game view, and all of which describe a leaderboard:
+
+- **A global leaderboard or win-count ranking.** Aggregating win counts across
+  every match is the first query here that is not a point lookup, and the first
+  whose answer is identical for every caller. Cache the computed ranking under
+  one key with a short TTL, accept that it lags by that TTL, and say so in the
+  UI. This is the case Redis is actually for.
+- **`GET /api/users`, the opponent picker.** Shared across callers, changes only
+  when somebody registers. Cache the first page, invalidate on registration.
+  Worth doing only once the user table is large enough that pagination hurts,
+  which for a two-player game means never.
+- **Rate-limit counters.** The one place a shared store becomes necessary rather
+  than merely nice: `@nestjs/throttler` keeps its counters in process memory, so
+  budgets multiply by instance count. A second API instance is the trigger — not
+  traffic — and the fix is a Redis throttler storage, not a cache.
+
+That last one is the honest answer to "when would you add Redis to this?" It is
+not for speed. It is the moment the deployment stops being one process, because
+that is the moment in-memory state stops being correct. Everything else on this
+list is an optimisation; that one is a correctness fix, and it is recorded as a
+Low finding in the validation report rather than as a future idea.
+
 ## What is deliberately absent
 
 - **No caching layer.** Nothing has been profiled, and a cache added in
