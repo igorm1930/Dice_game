@@ -4,6 +4,7 @@ import { type AuthSession, type GameView, ROUTES } from '@dice-game/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { type DicePair } from '../domain/dice';
+import { standardRulesV1 } from '../domain/rules/standard-v1';
 import {
   clearDatabase,
   createIntegrationApp,
@@ -19,9 +20,9 @@ import {
  * because "exactly one of two simultaneous writers wins" is a property of the
  * server's conditional update and not of this process.
  *
- * The dice are the deterministic generator — bound because `NODE_ENV=test`, see
- * `dice-generator.provider.ts` — scripted per test, so a double six is asserted
- * rather than waited for.
+ * The dice are the deterministic generator — bound because `DICE_SOURCE=scripted`,
+ * see `dice-generator.provider.ts` — scripted per test, so a double six is
+ * asserted rather than waited for.
  *
  * `docker compose up -d` from the repository root must be running.
  */
@@ -239,11 +240,13 @@ describe('holding', () => {
   });
 
   it('wins the game when the banked total reaches the target', async () => {
-    const game = await startGame(2);
+    const game = await startGame(standardRulesV1.minimumWinningScore);
 
+    // Two throws: the scripted pair banks 7 and the minimum target is 10.
     await roll(ada, game.id, 0).expect(200);
+    await roll(ada, game.id, 1).expect(200);
 
-    const response = await hold(ada, game.id, 1).expect(200);
+    const response = await hold(ada, game.id, 2).expect(200);
     const won = response.body.data as GameView;
 
     expect(won.status).toBe('COMPLETED');
@@ -256,11 +259,13 @@ describe('holding', () => {
 
 describe('a completed game', () => {
   it('refuses every further action, for either player', async () => {
-    const game = await startGame(2);
+    const game = await startGame(standardRulesV1.minimumWinningScore);
 
+    // Two throws: the scripted pair banks 7 and the minimum target is 10.
     await roll(ada, game.id, 0).expect(200);
+    await roll(ada, game.id, 1).expect(200);
 
-    const won = (await hold(ada, game.id, 1).expect(200)).body.data as GameView;
+    const won = (await hold(ada, game.id, 2).expect(200)).body.data as GameView;
 
     const adaRolls = await roll(ada, game.id, won.revision).expect(409);
     const graceRolls = await roll(grace, game.id, won.revision).expect(409);
@@ -373,11 +378,13 @@ describe('the revision guard', () => {
 
 describe('new game', () => {
   it('resets the board, keeps the win counts and increments the game number', async () => {
-    const game = await startGame(2);
+    const game = await startGame(standardRulesV1.minimumWinningScore);
 
+    // Two throws: the scripted pair banks 7 and the minimum target is 10.
     await roll(ada, game.id, 0).expect(200);
+    await roll(ada, game.id, 1).expect(200);
 
-    const won = (await hold(ada, game.id, 1).expect(200)).body.data as GameView;
+    const won = (await hold(ada, game.id, 2).expect(200)).body.data as GameView;
 
     const response = await instance.http
       .post(ROUTES.games.newGame(game.id))
@@ -428,11 +435,13 @@ describe('persistence across a restart', () => {
   });
 
   it('keeps win counts across the restart, so the series survives a deploy', async () => {
-    const game = await startGame(2);
+    const game = await startGame(standardRulesV1.minimumWinningScore);
 
+    // Two throws: the scripted pair banks 7 and the minimum target is 10.
     await roll(ada, game.id, 0).expect(200);
+    await roll(ada, game.id, 1).expect(200);
 
-    const won = (await hold(ada, game.id, 1).expect(200)).body.data as GameView;
+    const won = (await hold(ada, game.id, 2).expect(200)).body.data as GameView;
 
     await instance.http
       .post(ROUTES.games.newGame(game.id))

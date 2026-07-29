@@ -140,7 +140,7 @@ describe('createGame', () => {
   });
 
   it('accepts the exact bounds', () => {
-    expect(game(standardRulesV1.minimumWinningScore).winningScore).toBe(2);
+    expect(game(standardRulesV1.minimumWinningScore).winningScore).toBe(10);
     expect(game(standardRulesV1.maximumWinningScore).winningScore).toBe(1000);
   });
 
@@ -164,7 +164,7 @@ describe('createGame', () => {
       expect(error).toBeInstanceOf(InvalidTargetScoreError);
       expect((error as InvalidTargetScoreError).details).toEqual({
         requested: 1,
-        minimum: 2,
+        minimum: 10,
         maximum: 1000,
       });
     }
@@ -483,7 +483,7 @@ describe('applyHold — winning', () => {
     // winningScore` would disagree with the policy. Without the second case a
     // stub that is never consulted still passes.
     const neverWins = rulesWhere({ hasWon: () => false });
-    const overshot = applyHold(score(game(2), 10), ALICE.userId, neverWins);
+    const overshot = applyHold(score(game(10), 10), ALICE.userId, neverWins);
 
     expect(overshot.players[0].globalScore).toBe(10);
     expect(overshot.status).toBe('ACTIVE');

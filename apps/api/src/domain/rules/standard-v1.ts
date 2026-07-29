@@ -43,7 +43,7 @@ const BUST_FACE: DieValue = 6;
  * no additional coverage.
  */
 const DEFAULT_WINNING_SCORE = 100;
-const MIN_WINNING_SCORE = 2;
+const MIN_WINNING_SCORE = 10;
 const MAX_WINNING_SCORE = 1000;
 
 export const standardRulesV1: GameRules = Object.freeze({

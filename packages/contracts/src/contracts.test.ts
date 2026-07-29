@@ -44,8 +44,20 @@ describe('winning score bounds', () => {
     expect(DEFAULT_WINNING_SCORE).toBeLessThanOrEqual(MAX_WINNING_SCORE);
   });
 
-  it('keeps the minimum low enough to win in one hold, so e2e stays fast', () => {
-    expect(MIN_WINNING_SCORE).toBeLessThanOrEqual(12);
+  /**
+   * Two throws of the deterministic script bank 3+4 then 1+2, so a target at or
+   * below 10 is reachable in a single turn. That keeps the browser suite to a
+   * handful of clicks without the minimum being lowered *past* what a real game
+   * would allow — which is what it was before, at 2.
+   */
+  it('stays reachable in one turn of the scripted dice, so e2e stays fast', () => {
+    expect(MIN_WINNING_SCORE).toBeLessThanOrEqual(10);
+  });
+
+  it('is not so low that a match can end on its first hold', () => {
+    // A single average throw is 7. A minimum under that makes the winning score
+    // decorative.
+    expect(MIN_WINNING_SCORE).toBeGreaterThan(7);
   });
 });
 

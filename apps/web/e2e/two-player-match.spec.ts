@@ -26,10 +26,10 @@ import { roundScoreAfter } from './support/dice';
  * turn it is, who won, and — the one that matters after New Game — that the win
  * count survived while the scores did not.
  *
- * The winning score is 10 because the first two throws of the deterministic
- * script bank 7 and then 7 again. That is what `MIN_WINNING_SCORE = 2` in the
- * contract exists for: a match that can be decided in a handful of clicks
- * without scripting a dozen rounds.
+ * The winning score is 10, which is `MIN_WINNING_SCORE`: the first two throws of
+ * the deterministic script bank 3+4 and then 1+2, so a match is decided in a
+ * handful of clicks without scripting a dozen rounds and without asking for a
+ * target no real game would allow.
  */
 const WINNING_SCORE = 10;
 

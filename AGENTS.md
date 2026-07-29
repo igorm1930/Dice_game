@@ -196,7 +196,9 @@ build stage.
 - Deliberate end-to-end tests of `standard@1` live in `rules/standard-v1.test.ts`
   alongside the rule they depend on, not in the engine suite.
 - E2E uses deterministic dice and a low winning score. That is why
-  `MIN_WINNING_SCORE` is 2 rather than 10 — a match can be won in one hold.
+  `MIN_WINNING_SCORE` is 10, which the scripted dice clear in one turn (3+4 then
+  1+2). It was 2 for a while so a match could be won in a single hold; that was a
+  product bound moved for a test's convenience, and no test ever needed it.
 
 ### Three ways a Playwright assertion here lies to you
 

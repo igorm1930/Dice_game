@@ -29,10 +29,14 @@ from either seat afterwards.
 creation and can only change when a new game starts. Allowing a mid-game change
 would let a losing player move the finish line.
 
-**Winning-score range is 2–1000, default 100.** The default is specified. The
-minimum is 2 rather than a rounder 10 so an end-to-end test can win a match in a
-single hold with deterministic dice, instead of scripting a dozen rounds for no
-additional coverage.
+**Winning-score range is 10–1000, default 100.** The default is specified. The
+minimum is 10, which the deterministic script clears inside one turn — it opens
+3+4 then 1+2 — so the browser suite still decides a match in a handful of clicks.
+
+It was 2 for a while, to let a match be won in a single hold. That was a product
+bound moved for a test's convenience, and it did not even buy what it claimed:
+no test in the repository ever asked for a target below 10. Meanwhile a player
+could create a match that ended on the first hold.
 
 **New Game is legal at any time, including mid-game**, by either participant. It
 preserves both players and both win counts, and resets the scores. The brief

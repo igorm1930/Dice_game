@@ -27,11 +27,14 @@ export type Seat = z.infer<typeof seatSchema>;
 /**
  * Winning-score bounds.
  *
- * The minimum is 2 rather than 10 so an end-to-end test can win a match in a
- * single hold with deterministic dice, instead of scripting a dozen rounds for
- * no additional coverage.
+ * The minimum was 2 for a while, to let an end-to-end test win a match in one
+ * hold. That was a product bound moved for a test's convenience, and it did not
+ * even buy what it claimed: the deterministic script opens 3+4 then 1+2, so a
+ * first turn banks 10 without a second round, and no test in the repository ever
+ * asked for a target below 10. A player could create a match that ends on the
+ * first hold, for no reason anyone could point at.
  */
-export const MIN_WINNING_SCORE = 2;
+export const MIN_WINNING_SCORE = 10;
 export const MAX_WINNING_SCORE = 1000;
 export const DEFAULT_WINNING_SCORE = 100;
 

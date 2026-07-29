@@ -30,7 +30,7 @@ out to a win, so it can only be as current as the last passing suite.
   Holding on zero is legal — it is how you voluntarily pass.
 - First to **reach or exceed** the winning score wins. Checked on hold only, so a
   hot streak is worth nothing until it is banked.
-- Winning score defaults to **100**, configurable per game (2–1000).
+- Winning score defaults to **100**, configurable per game (10–1000).
 - Either player may start a new game **at any time**. Win counts survive; scores
   do not.
 

@@ -178,7 +178,7 @@ describe('availableActions', () => {
   });
 
   it('withdraws both moves once the game is won, for the winner as well', () => {
-    const won = applyHold(score(game(2), 5), ADA.userId, standardRulesV1);
+    const won = applyHold(score(game(10), 12), ADA.userId, standardRulesV1);
     const view = toGameView(persisted(won), ADA.userId);
 
     expect(view).toMatchObject({ status: 'COMPLETED', winner: 0, effect: 'GAME_WON' });

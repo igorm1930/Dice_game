@@ -53,7 +53,7 @@ describe('standard@1 identity', () => {
 
   it('publishes the default and the playable bounds', () => {
     expect(standardRulesV1.defaultWinningScore).toBe(100);
-    expect(standardRulesV1.minimumWinningScore).toBe(2);
+    expect(standardRulesV1.minimumWinningScore).toBe(10);
     expect(standardRulesV1.maximumWinningScore).toBe(1000);
   });
 });

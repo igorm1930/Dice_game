@@ -467,10 +467,12 @@ describe('roll', () => {
   it('refuses to play a match that has already been won', async () => {
     const { service, repository } = harness();
     await seed(repository, newMatch(GAME_ID, standardRulesV1.minimumWinningScore));
+    // Two throws to clear the minimum: the scripted pair is 7, the floor is 10.
     await service.roll(ADA, GAME_ID, { expectedRevision: 0 });
-    await service.hold(ADA, GAME_ID, { expectedRevision: 1 });
+    await service.roll(ADA, GAME_ID, { expectedRevision: 1 });
+    await service.hold(ADA, GAME_ID, { expectedRevision: 2 });
 
-    await expect(service.roll(ADA, GAME_ID, { expectedRevision: 2 })).rejects.toMatchObject({
+    await expect(service.roll(ADA, GAME_ID, { expectedRevision: 3 })).rejects.toMatchObject({
       code: 'GAME_OVER',
     });
   });
@@ -509,8 +511,9 @@ describe('hold', () => {
     const { service, repository } = harness();
     await seed(repository, newMatch(GAME_ID, standardRulesV1.minimumWinningScore));
     await service.roll(ADA, GAME_ID, { expectedRevision: 0 });
+    await service.roll(ADA, GAME_ID, { expectedRevision: 1 });
 
-    const view = await service.hold(ADA, GAME_ID, { expectedRevision: 1 });
+    const view = await service.hold(ADA, GAME_ID, { expectedRevision: 2 });
 
     expect(view).toMatchObject({ status: 'COMPLETED', winner: 0, effect: 'GAME_WON' });
     expect(view.players[0].winCount).toBe(1);
@@ -532,9 +535,10 @@ describe('newGame', () => {
     const { service, repository } = harness();
     await seed(repository, newMatch(GAME_ID, standardRulesV1.minimumWinningScore));
     await service.roll(ADA, GAME_ID, { expectedRevision: 0 });
-    await service.hold(ADA, GAME_ID, { expectedRevision: 1 });
+    await service.roll(ADA, GAME_ID, { expectedRevision: 1 });
+    await service.hold(ADA, GAME_ID, { expectedRevision: 2 });
 
-    const view = await service.newGame(ADA, GAME_ID, { expectedRevision: 2 });
+    const view = await service.newGame(ADA, GAME_ID, { expectedRevision: 3 });
 
     expect(view).toMatchObject({
       gameNumber: 2,
