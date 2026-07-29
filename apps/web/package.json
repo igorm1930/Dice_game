@@ -25,6 +25,7 @@
   "devDependencies": {
     "@dice-game/eslint-config": "workspace:*",
     "@dice-game/typescript-config": "workspace:*",
+    "@playwright/test": "1.56.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.6.3",
