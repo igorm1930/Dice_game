@@ -1,9 +1,82 @@
 # Deployment
 
-**Current status: prepared and validated, not deployed.** No Fly app, no Vercel
-project, no Atlas cluster exists. Everything below is configuration that has
-been written and checked as far as it can be without credentials; the gaps are
-named at the foot of this page rather than glossed.
+Two paths, and they are not equivalent.
+
+**Self-hosted on one box is the supported one** — `compose.prod.yaml` runs
+MongoDB, the API, the client and Caddy on a single host, with automatic HTTPS
+and nothing but Caddy holding a public port. It is one command and needs no
+managed services. The web image has been built and run and serves the page; the
+API image has not — see "What is actually verified".
+
+**Fly + Vercel + Atlas** is configuration that was written earlier and validated
+as far as it can be without accounts. Nothing has ever been deployed to it. It
+is kept because the workflow and the health gating are worth reading, not
+because it is a path anyone has walked.
+
+---
+
+## Self-hosted: the whole application on one host
+
+Requirements: a host with Docker and Docker Compose, ports 80 and 443 open, and
+a domain whose A record already resolves to it. A Hetzner CX22 is more than
+enough — the API is idle between requests and MongoDB holds kilobytes.
+
+```bash
+git clone https://github.com/igorm1930/dice_game.git && cd dice_game
+
+cp .env.production.example .env.production
+# fill in DOMAIN, ACME_EMAIL, MONGO_PASSWORD, JWT_SECRET
+#   openssl rand -base64 32   # MONGO_PASSWORD
+#   openssl rand -base64 48   # JWT_SECRET
+
+docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+```
+
+The first `up` takes a few minutes: it builds both images and Caddy requests a
+certificate. Then:
+
+```bash
+docker compose -f compose.prod.yaml --env-file .env.production ps
+curl https://<your-domain>/api/health/ready
+```
+
+`ready` answering `200` means the API has a live MongoDB connection. Visit the
+domain and both seats are on the page.
+
+### Why the DNS record has to exist first
+
+Caddy obtains the certificate over Let's Encrypt's HTTP-01 challenge, which
+means Let's Encrypt connects **back** to port 80 on the address the domain
+resolves to. Start before DNS has propagated and issuance fails — and failures
+count against a rate limit of five per domain per week, so the cost of being
+early is waiting, not retrying.
+
+### What is exposed
+
+Only Caddy publishes ports. The API, the client and MongoDB have no `ports:`
+entry at all and are reachable only across the compose network, which is why
+MongoDB runs without TLS and why the API is not a public origin. `TRUST_PROXY_HOPS`
+is `1` because exactly one proxy sits in front; getting that number wrong in
+either direction breaks rate limiting — see `docs/security.md`.
+
+### Updating a running deployment
+
+```bash
+git pull
+docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+```
+
+Compose replaces containers whose image changed and leaves the MongoDB volume
+alone. The volume is named `dice-game-prod-mongo-data`; **`docker compose down
+-v` deletes it**, along with every account and match.
+
+### Backups
+
+There are none, and that is a gap rather than a decision. A single-host
+deployment with one volume needs `mongodump` on a timer and the dump copied off
+the box; nothing here does that.
+
+---
 
 ## Shape
 
@@ -116,26 +189,50 @@ intent is stated rather than enforced by accident.
 
 ## What is actually verified
 
-| Item                                                     | Status                             |
-| -------------------------------------------------------- | ---------------------------------- |
-| `fly.toml` parses; every key lands in its intended table | verified with `tomllib`            |
-| `compose.yaml` valid                                     | `docker compose config -q`, exit 0 |
-| API runs against real MongoDB                            | 64 integration tests               |
-| Image builds end to end                                  | **unverified locally** — see below |
-| Fly deploy                                               | **blocked**: no credentials        |
-| Vercel deploy                                            | **blocked**: no credentials        |
-| Atlas cluster                                            | **blocked**: none provisioned      |
-| Live URLs                                                | **none exist**                     |
-| Deploy workflow written                                  | YAML parses; retry policy tested   |
-| Deploy workflow executed                                 | **never run** — no credentials     |
+| Item                                                     | Status                                              |
+| -------------------------------------------------------- | --------------------------------------------------- |
+| `fly.toml` parses; every key lands in its intended table | verified with `tomllib`                             |
+| `compose.yaml` valid                                     | `docker compose config -q`, exit 0                  |
+| `compose.prod.yaml` valid; required vars fail loudly     | `docker compose config`, and a missing var refuses  |
+| `.env.production` cannot be committed                    | checked by creating one and watching git ignore it  |
+| API runs against real MongoDB                            | 64 integration tests                                |
+| **Web image builds end to end**                          | **verified** — built, run, serves the page with CSS |
+| API image builds end to end                              | **unverified** — blocked here, see below            |
+| Self-hosted stack running                                | **not run** — needs a host                          |
+| Fly / Vercel / Atlas deploy                              | **blocked**: no credentials                         |
+| Live URLs                                                | **none exist**                                      |
+| Deploy workflow executed                                 | **never run** — no credentials                      |
 
-The image build cannot complete in the environment this was developed in: the
-egress proxy blocks Alpine's package repository and intercepts the npm registry.
-A probe build with the proxy CA injected reached the argon2 compile, which is
-how the missing toolchain was found — but the build past that point is unproven
-until CI runs it. That is why `.github/workflows/ci.yml` has a `docker` job: CI
-is the first place the Dockerfile is exercised end to end, and it may well go red
-on its first run.
+The web image is built, run, and serving: `GET /` returns 200 with both seats on
+the page, and the stylesheet returns 200 with content — which is the check worth
+naming, because `output: 'standalone'` excludes `.next/static`, so an image that
+forgets to copy it starts perfectly and serves an unstyled page.
+
+**The API image is still unbuilt, and the reason changed.** This was recorded as
+a TLS problem with the development environment's intercepting proxy. It was not,
+or not only. Injecting the proxy CA moved the failure twice, and each move found
+something real:
+
+1. `apk add python3 make g++` → _Permission denied_. The egress policy here does
+   not allow Alpine's package repositories. Environmental, and it will not
+   happen on an ordinary host.
+2. Past that, `corepack enable && pnpm install` → **`Cannot find matching keyid`**.
+   This one was a genuine defect and it would have failed on any machine on
+   earth. corepack verifies a package-manager download against npm signing keys
+   compiled into it; npm rotated that key and the old one expired on
+   2025-01-29, so the corepack shipped in every Node image published before the
+   rotation cannot verify the current pnpm tarball. The registry lists both
+   keys — the expired `jl3bw…` corepack trusts, and the current `DhQ8wR5…` the
+   tarball is signed with. Both Dockerfiles now install pnpm with npm at the
+   version `packageManager` pins, and the build clears that step.
+3. Past _that_, argon2 falls back to node-gyp and stops at `findPython` —
+   confirming the toolchain the Dockerfile installs is genuinely required. It is
+   required on `bookworm-slim` too; that was tested, so the Alpine base is not
+   the cause and switching bases would not avoid it.
+
+So the API build now fails at exactly one step, and only in this sandbox. On a
+host that can reach `dl-cdn.alpinelinux.org` it should complete — but "should"
+is not "did", and it stays listed as unverified until someone watches it finish.
 
 ## The deploy workflow
 

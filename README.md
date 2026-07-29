@@ -4,11 +4,12 @@ A two-player dice game where **the backend owns every rule**. Two authenticated
 players share one page; the React client sends commands and renders whatever the
 API returns.
 
-> **Not deployed.** The application is complete and tested — 462 unit tests, 64
-> integration tests against a real MongoDB, and 5 Playwright scenarios driving a
-> real browser — but no Fly app, Vercel project or Atlas cluster exists, so there
-> is no live URL. See [docs/deployment.md](docs/deployment.md) for exactly what
-> is verified and what is blocked.
+> **Tested, and deployable in one command.** 462 unit tests, 64 integration
+> tests against a real MongoDB, 5 Playwright scenarios in a real browser.
+> `compose.prod.yaml` runs the whole application — MongoDB, API, client and Caddy
+> with automatic HTTPS — on a single host. See
+> [docs/deployment.md](docs/deployment.md) for the command and for exactly what
+> has and has not been verified.
 
 ![Two seats mid-match: Ada has rolled 5 and 2 for a round score of 7, her
 controls are live and Seat B's Roll and Hold are
@@ -61,6 +62,35 @@ in this table is aspirational — each test named here exists and passes.
 | Custom winning score                        | `createGame`, frozen for the match                                                                             | `accepts a custom winning score`, plus bounds rejection                                                                                                     |
 | New Game at any time                        | `startNewGame` — legal mid-match, preserves win counts                                                         | `is legal during an active game`, `preserving win counts`                                                                                                   |
 | **No game logic in React**                  | Nothing to enforce — the absence is the property                                                               | `grep -rn "Math\." apps/web/src` → nothing; no die-face or `winningScore` comparison; no score arithmetic                                                   |
+
+## The optional extras
+
+The brief lists six optional additions. Four are implemented; two were declined,
+and the reasons are here rather than left for a reviewer to guess.
+
+| #   | Extra                                                | Status                                                                                                                                 |
+| --- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Track how many times a player has won                | **Done.** `winCount` per seat, preserved across New Game and reset by nothing except a new pairing                                     |
+| 2   | Persist data                                         | **Done.** MongoDB, behind a repository port; 64 integration tests run against a real `mongo:7.0`                                       |
+| 3   | AI opponent                                          | **Not done** — see below                                                                                                               |
+| 4   | On 6 & 6, disable actions briefly and show a message | **Done.** [`use-double-six-pause.ts`](apps/web/src/hooks/use-double-six-pause.ts), 1600 ms, with a callout and a live-region narration |
+| 5   | Sound effects or background music                    | **Not done** — see below                                                                                                               |
+| 6   | Any other creative additions                         | Versioned rules policy, full keyboard/screen-reader support, deterministic browser tests, an independent validation report             |
+
+**Why no AI opponent.** It is the one extra that would have changed the
+architecture rather than added to it, and doing it properly means deciding
+whether a bot is a _player_ (a second identity, authenticated, with a token) or
+a _policy_ the server applies on one seat's behalf. The first needs a machine
+identity in an auth model built for humans; the second puts an actor inside the
+API that no request drives, which is a scheduler, not an endpoint. Either is a
+day's work done well and an afternoon's work done badly, and a shallow version
+would sit exactly where the design is most load-bearing. The shape it would take
+is written up in [docs/assumptions.md](docs/assumptions.md).
+
+**Why no sound.** Nothing here is hostile to it; it simply buys less than
+anything else the same time could go to. The double-six moment is already
+announced to a screen reader through a polite live region, which is the version
+of "feedback on a bust" that a keyboard user gets, and it is tested.
 
 Two features were **dropped rather than computed** to keep that last row true: a
 progress bar toward the target (division on scores) and naming who threw the

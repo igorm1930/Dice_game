@@ -9,9 +9,13 @@ out/
 *.log
 *.tsbuildinfo
 
-.env
-.env.local
-.env.*.local
+# Every .env except the two committed templates. Written as a broad ignore with
+# explicit exceptions rather than a list of names: the list would need editing
+# every time a deployment target is added, and the failure mode of forgetting is
+# committing production credentials.
+.env*
+!.env.example
+!.env.production.example
 
 # Playwright
 test-results/

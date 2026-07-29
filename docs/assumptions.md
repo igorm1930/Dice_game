@@ -74,8 +74,31 @@ both panels; a second browser sees the same server state on its next fetch.
 **Persistence is MongoDB, in-memory until Phase 4.** Repository ports were
 defined first so the swap changes adapters only.
 
-**No AI opponent, no sound, no spectator mode.** Optional extras do not
-compensate for mandatory requirements, and none of these is requested.
+**No AI opponent, no sound.** Both are on the brief's optional list, so this is
+a decision rather than an oversight — four of the six optional extras are
+implemented, and the table in the README says which. Optional additions do not
+compensate for mandatory requirements, and the mandatory ones were finished
+first.
+
+The AI opponent is the interesting refusal, because the choice is
+architectural rather than a matter of effort. A bot can be either:
+
+- **A player** — a second identity with an account, a token, and requests it
+  makes for itself. Honest, and it needs nothing new in the game layer: the
+  server cannot tell it from a human, which is the point. But it puts a machine
+  identity into an auth model built entirely for humans (registration, password
+  hashing, revocation by `tokenVersion`) and needs something outside the request
+  cycle to drive it.
+- **A policy** — a `TurnStrategy` in the domain, pure, alongside `GameRules`:
+  `decide(state, rules): 'ROLL' | 'HOLD'`. It would fit the existing seams
+  exactly, be trivial to test (no framework, no clock, no randomness), and cost
+  a `RulesetRef`-style reference persisted on the game. But something must
+  _apply_ it after a human's turn ends, and that something is a scheduler, not
+  an endpoint — the first thing in this codebase that acts without a request.
+
+Neither is hard. Both are a day to do properly, and a shallow version would sit
+precisely where the design carries the most weight. A `TurnStrategy` port is the
+one to build if it is ever wanted.
 
 ## Known limitations
 

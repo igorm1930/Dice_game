@@ -26,10 +26,10 @@ than scripted ones. No Critical or High security findings (§5).
 deliverable, and one failure is unexplained:**
 
 - **The API container image has never been built successfully.** Not once, in
-  this environment or any other. `docker build -f apps/api/Dockerfile` fails at
-  `apk add python3 make g++` against the sandbox's TLS-intercepting proxy. The
-  Dockerfile is committed, referenced by CI and by the deploy workflow, and is
-  entirely unverified.
+  this environment or any other. The Dockerfile is committed, referenced by CI
+  and by the deploy workflow, and is entirely unverified. _(The cause given here
+  originally — the sandbox's TLS proxy — turned out to be hiding a real defect.
+  See the addendum to §6; the conclusion is unchanged.)_
 - **Nothing is deployed.** No Fly app, no Vercel project, no Atlas cluster, no
   live URL. The deploy workflow, its rollback path, and the Fly health gate have
   never executed.
@@ -100,9 +100,13 @@ comparison against a die face, no local winner detection. Three near-misses wort
 a reader knowing about:
 
 1. `use-double-six-pause.ts` holds Roll and Hold for 1600 ms after a double six.
-   It is the one client-side gate in the app. Purely subtractive — it can never
-   enable an action the server forbade, and the transition has already happened —
-   but it is literally the client deciding a button is disabled.
+   Three reviewers independently flagged this as the app's one client-side gate
+   and a possible breach of "no game logic in the frontend". **It is neither: it
+   is optional extra #4, which asks in as many words for actions to be disabled
+   briefly on 6 & 6.** It is also purely subtractive — it can never enable an
+   action the server forbade, and the server has already applied the transition
+   by the time the timer starts. Recorded because the reviewers were right to
+   stop on it, and the answer is in the brief rather than in a defence.
 2. `viewerSeat === activePlayer` appears in `seat-controls.tsx` and
    `game-board.tsx`. Both operands are server fields and the comparison chooses a
    sentence or a CSS class; it gates nothing. The `disagree` fixtures exist
@@ -275,12 +279,58 @@ CI against the built image.
 | 1   | The API image has never been built end to end                             | High to delivery, none to requirements | No §3 requirement affected. Blocks deployment, and every claim the Dockerfile makes is untested               | `apps/api/Dockerfile`                                     | Build on a network without a TLS-intercepting proxy, or inject the proxy CA into the build stage                                         | Minutes, once off this sandbox                                             |
 | 2   | Nothing is deployed; no live URL                                          | High to delivery, none to requirements | The deploy workflow, its rollback path and the Fly health gate are entirely unexercised                       | `infrastructure/fly/`, `.github/workflows/deploy-api.yml` | Needs Fly, Vercel and Atlas credentials                                                                                                  | ~1 hour with credentials                                                   |
 | 3   | One integration failure, observed once, unexplained                       | Medium                                 | `lastDice: [6,6]` with `effect: NORMAL_ROLL` is a state `applyRoll` cannot produce. Not reproduced in 28 runs | `apps/api/src/games/games.integration.spec.ts`            | Instrument the roll path to log the `evaluateRoll` outcome alongside the persisted document, and run the spec under load until it recurs | Half a day, open-ended                                                     |
-| 4   | No CSP or security headers on the web origin (M2)                         | Medium                                 | None — no XSS sink exists today                                                                               | `apps/web/next.config.ts`                                 | Add `headers()` with CSP, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`; `poweredByHeader: false`                       | 1–2 hours, most of it verifying a nonce-based CSP does not break hydration |
+| 4   | No CSP on the web origin; other headers now set (M2)                      | Medium                                 | None — no XSS sink exists today                                                                               | `apps/web/next.config.ts`                                 | Add `headers()` with CSP, `X-Frame-Options`, `Referrer-Policy`, `X-Content-Type-Options`; `poweredByHeader: false`                       | 1–2 hours, most of it verifying a nonce-based CSP does not break hydration |
 | 5   | `NODE_ENV` gates both the scripted dice and every production refusal (M3) | Medium                                 | None while deployment pins `production`                                                                       | `dice-generator.provider.ts`, `config/env.schema.ts`      | A separate opt-in flag for the scripted generator, plus a boot assertion that it is unbound outside tests                                | 2–3 hours                                                                  |
 | 6   | Credential rate limiting is per-IP only                                   | Low                                    | None                                                                                                          | `config/rate-limit.config.ts`                             | Per-account counter with backoff; shared store if more than one instance runs                                                            | Half a day                                                                 |
 | 7   | `MIN_WINNING_SCORE` is 2 because e2e needed it                            | Low                                    | None — the bound is visible to both players                                                                   | `contracts/primitives.ts`, `standard-v1.ts`               | Raise to 10 and let e2e script a two-hold win instead                                                                                    | 1 hour                                                                     |
-| 8   | `docker compose build` builds nothing                                     | Low                                    | None                                                                                                          | `compose.yaml`                                            | Either add a `build:` for the API or stop listing the command as a check                                                                 | 15 minutes                                                                 |
-| 9   | Ten `wip(...)` commits, three announcing a broken tree in the subject     | Low, cosmetic                          | None                                                                                                          | Git history                                               | Squash into the feature commits they belong to before submission                                                                         | 30 minutes, needs a force-push                                             |
+| 8   | ~~`docker compose build` builds nothing~~ — still true of `compose.yaml`  | Low                                    | None                                                                                                          | `compose.yaml`                                            | Either add a `build:` for the API or stop listing the command as a check                                                                 | 15 minutes                                                                 |
+| 9   | ~~Ten `wip(...)` commits~~ — **CLOSED**, squashed to 41 commits           | Closed                                 | None                                                                                                          | Git history                                               | Squash into the feature commits they belong to before submission                                                                         | 30 minutes, needs a force-push                                             |
+
+### Addendum — what changed after this report was first written
+
+The report above was produced at `c53ad0b`. Work since then closed or moved
+four of its gaps, and turned one of them into a defect worth naming.
+
+- **Gap 9 is closed.** The ten `wip(...)` commits were squashed; history is 41
+  commits with none of them announcing a broken tree. The tree was verified
+  byte-identical before and after the rewrite.
+- **Gap 1 changed cause, and the real one was a defect.** "The image has never
+  been built" was attributed to this environment's TLS-intercepting proxy.
+  Injecting the proxy CA moved the failure past that and exposed
+  **`Cannot find matching keyid`** from corepack — which is not environmental
+  and would have failed on any machine. corepack verifies package-manager
+  downloads against npm signing keys compiled into it; npm rotated that key and
+  the old one expired 2025-01-29, so every Node image published before the
+  rotation ships a corepack that cannot verify the current pnpm tarball. Both
+  Dockerfiles now install pnpm with npm at the version `packageManager` pins.
+  The API build clears that step and now stops only at `apk add`, which this
+  sandbox's egress policy blocks. Still unverified end to end — but for one
+  environmental reason instead of an unexamined one.
+- **A web image now exists and has been run.** `apps/web/Dockerfile` was
+  written, built, started, and serves the page with its stylesheet — the last
+  check being the one that matters, since `output: 'standalone'` omits
+  `.next/static` and an image that forgets to copy it starts cleanly and serves
+  an unstyled page. This is the first container image the project has produced.
+- **Gap 2 is unblocked but not closed.** `compose.prod.yaml` and a Caddyfile run
+  the whole application on one host with automatic HTTPS. The compose file
+  validates and its required-variable guards were confirmed to refuse a missing
+  secret. Nothing has been deployed from here — this environment has no SSH
+  client and port 22 is blocked — so "deployable in one command" remains a claim
+  about a command nobody has yet run to completion.
+- **Gap 4 is narrower.** The Caddyfile sets HSTS, `X-Content-Type-Options`,
+  `Referrer-Policy` and `X-Frame-Options` on the origin that serves the HTML.
+  CSP is still absent, and deliberately: Next's App Router injects inline
+  bootstrap scripts, so a real policy needs a per-request nonce threaded through
+  the framework rather than a static header, and `unsafe-inline` would be
+  theatre.
+- **A secret-leak path was closed on the way past.** `.gitignore` covered `.env`
+  and `.env.local` but not `.env.production`, which the new deployment path
+  tells you to create and fill with a database password and a JWT signing key.
+  It is now `.env*` with explicit exceptions for the two committed templates,
+  verified by creating the file and watching git ignore it.
+
+None of this changes the verdict. The image is still unbuilt end to end and
+nothing is deployed, which is what PARTIAL PASS was recording.
 
 ### What this project is genuinely good at, and where that came from
 

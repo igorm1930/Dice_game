@@ -127,5 +127,7 @@ running it, are in [decision 5](decisions/0005-mongodb-behind-the-ports.md).
   current state on its next fetch.
 - **No microservices, no message queue, no Kubernetes.** One deployable, one
   database, proportional to a two-player dice game.
-- **No AI opponent.** Optional extras do not compensate for mandatory
-  requirements.
+- **No AI opponent.** An optional extra, declined deliberately — it is the one
+  that would have changed the architecture rather than added to it. The shape it
+  would take (a pure `TurnStrategy` port beside `GameRules`, plus the scheduler
+  that would have to apply it) is in [assumptions.md](assumptions.md).

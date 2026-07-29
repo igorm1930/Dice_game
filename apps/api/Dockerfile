@@ -19,12 +19,27 @@ ARG NODE_VERSION=22.13.1
 ARG ALPINE_VERSION=3.21
 
 # ---------------------------------------------------------------------------
-# 1. Base — corepack pins the pnpm version from package.json
+# 1. Base — pnpm at the version package.json pins
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine${ALPINE_VERSION} AS base
 
-RUN corepack enable
 WORKDIR /repo
+
+# Installed with npm rather than through corepack, which cannot do this job.
+#
+# corepack verifies a package-manager download against a list of npm signing
+# keys compiled into it. npm rotated that key, and the old one expired on
+# 2025-01-29. Every Node image published before the rotation therefore ships a
+# corepack that trusts only the expired key, while the pnpm tarball on the
+# registry is signed with the current one — so `corepack enable && pnpm …` dies
+# with "Cannot find matching keyid" and there is nothing the build can do about
+# it. It is not a network problem and not a cache problem; it fails everywhere,
+# offline diagnosis included.
+#
+# The version is still read from `packageManager` rather than repeated here, so
+# there remains exactly one place that decides which pnpm this repository uses.
+COPY package.json ./
+RUN npm install -g "pnpm@$(node -p "require('./package.json').packageManager.split('@')[1]")"
 
 # ---------------------------------------------------------------------------
 # 2. Install and build the workspace
