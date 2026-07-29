@@ -1,0 +1,206 @@
+# Architecture
+
+## The shape
+
+```
+apps/web  ──HTTP──▶  apps/api  ──▶  MongoDB
+   │                    │
+   └──── packages/contracts ────┘
+```
+
+Three packages, one dependency edge that matters: both apps derive their types
+from the same Zod schemas, so a field cannot change on one side of the wire
+without failing the build on the other.
+
+## The backend owns the game
+
+Dice, active player, round score, global scores, winning score, legality,
+status, winner, win counts. All of it.
+
+This is not a stylistic preference — it is what makes the client unable to
+cheat, and it is enforced at the level of the wire format rather than by
+discipline:
+
+- **Roll and Hold carry no dice, no score, no actor.** Only `expectedRevision`.
+  A contract test asserts that a body containing `userId`, `dice`, `roundScore`
+  or `activePlayer` is rejected.
+- **`availableActions` is sent, not derived.** The client renders three booleans
+  it was given. A modified client could enable its own buttons; the server would
+  still refuse the action.
+- **`effect` is sent, not inferred.** The client animates a double six without
+  ever holding a definition of one.
+
+The client holds up its end: `apps/web/src` contains no comparison against a die
+face, no comparison against the winning score, no arithmetic on any score, and
+no `Math.`. Two features were dropped rather than computed — a progress bar
+toward the target (division on scores) and naming who threw the double six (not
+derivable from a view that arrives with the turn already passed).
+
+## Layers inside the API
+
+```
+http        controllers, guards, filters, pipes, interceptors
+   │        thin: validate, call, map. No rules.
+   ▼
+services    orchestration: load, resolve ruleset, draw dice, transition, persist
+   │        no rules of their own
+   ▼
+domain      pure functions over frozen state. The rules live here.
+   │
+   ▼
+ports       interfaces the domain and services depend on
+   ▲
+adapters    Mongoose, Argon2, JWT, crypto dice, system clock
+```
+
+The dependency rule points inward. `domain/` imports nothing but itself: no
+NestJS, no Mongoose, no HTTP, no clock, no randomness, no environment. That is
+enforced by `no-restricted-imports` patterns in the shared ESLint config and
+proven by a CI job that writes a deliberately illegal file and fails if the
+linter accepts it — see [decision 4](decisions/0004-guarded-by-the-linter.md).
+
+Everything the domain needs is passed in. Dice arrive as an argument because a
+`DiceGenerator` port produced them outside; the ruleset arrives as an argument
+because the registry resolved it outside. A domain test needs no fake beyond a
+literal.
+
+## Rules are a versioned policy
+
+`GameRules` is an interface with one implementation, `standard@1`, resolved
+through an allow-listed registry. `evaluateRoll` returns a discriminated
+`RollOutcome` and the engine applies the consequence without inspecting the
+dice. The outcome carries its own `effect`, because naming it is a rules
+decision.
+
+Every game persists `ruleset: { id, version }`, so a finished match stays
+scored by the rules it was played under.
+
+The payoff is measurable: changing the losing combination touches
+`rules/standard-v1.ts` and its own test file, and nothing else. Flip `BUST_FACE`
+from 6 to 5 and exactly five tests fail, all in that one file, while the 74
+engine tests keep passing. Full reasoning and the accepted limits are in
+[decision 1](decisions/0001-versioned-rules-policy.md).
+
+## Concurrency
+
+Two players act on one shared game from one page, with no live synchronisation.
+Every state-changing request carries `expectedRevision`; the write is a single
+`findOneAndUpdate` filtered on `{ _id, revision }` with `$inc`, one round trip,
+no preceding read and no transaction. No match means the view was stale:
+`GAME_REVISION_CONFLICT`, and the action is **not** replayed.
+
+The repository owns the revision. Domain transitions leave it untouched — a
+domain that incremented it would race with the check that depends on it.
+[Decision 2](decisions/0002-optimistic-concurrency.md).
+
+## Authorization
+
+Default-deny. A global `APP_GUARD` protects every route; four opt out with
+`@Public()`. The allow-list lives in the contract as `PUBLIC_ROUTES`, and a test
+asserts the mounted set equals it **by equality** — containment would let a new
+public route through.
+
+That test checks two things, because one is not enough. `DiscoveryService` sees
+the controllers Nest registers. It does not see anything mounted on the raw
+Express adapter — which is where Swagger lives, and where seven unauthenticated,
+unthrottled documentation routes were found hiding. The second assertion walks
+the real router stack after `init()`.
+
+## Persistence
+
+Repository ports with two implementations each: in-memory and Mongoose. The
+in-memory ones are not scaffolding to be deleted — they are what keeps the unit
+suite fast and runnable with no database, and they implement the same
+compare-and-set contract Mongo honours.
+
+Swapping is a module binding. No service, controller, mapper or domain file
+changes — the ports were the seam and they held. Why the in-memory adapters stay
+rather than being deleted, and the two Mongo defects that only surfaced by
+running it, are in [decision 5](decisions/0005-mongodb-behind-the-ports.md).
+
+## Observability
+
+Logging goes through Nest's own `ConsoleLogger` with `json: true` (`main.ts`),
+which emits one structured JSON object per line — level, pid, timestamp, message,
+context — and is filtered by `LOG_LEVEL`. `LOG_PRETTY` switches it to the human
+format for local work.
+
+**Pino and Winston were considered and not adopted.** Nest 11's built-in logger
+already produces structured JSON, honours the framework's own `LoggerService`
+contract, and adds no dependency to an image that ships a native argon2 build
+already. The usual reasons to reach for Pino — JSON output, level filtering,
+redaction — are either present or unneeded here: nothing logs a request body, a
+token or a password anywhere, so there is nothing to redact.
+
+The line worth defending is not the library, it is what is never logged. Error
+paths carry codes and identifiers and never values: `MongoConnectionError` names
+the database and swallows the URI, `EnvValidationError` names the failing
+variables and never prints them, and the Zod pipe drops Zod's `message` so
+submitted input is never echoed into a log or a response. An inbound
+`x-request-id` is allow-listed against a strict pattern before it is adopted as
+the correlation id, because a log line is a place an attacker will try to write.
+
+Swap the logger by passing a different `LoggerService` at `NestFactory.create` —
+one call site, because nothing in the codebase calls `console.log` directly.
+
+## Caching, and why there is none
+
+No Redis, no in-process cache, no HTTP cache headers on game reads. That is a
+decision, and it is the right one at this size — but the shape of the answer
+matters more than the answer.
+
+**Every read in this application is a single document fetched by `_id`.** A game
+view is one `findById` against a collection with a primary-key index, and it is
+per-viewer: `availableActions` and `viewerSeat` are computed relative to whoever
+asked, so two seats reading the same game get two different payloads. Putting
+Redis in front of that would add a network hop and a coherence problem to
+replace an indexed point lookup. It would make the system slower and less
+correct.
+
+**The write path is why a cache would be actively dangerous here.** Correctness
+rests on a compare-and-set: `findOneAndUpdate({ _id, revision }, ...)`, which is
+atomic _in MongoDB_. A cache in front of reads means a client can be handed a
+stale `revision`, and a stale revision is not a stale render — it is a write that
+gets refused, or worse, one that is accepted against a state the caller never
+saw. Any cache added here has to be invalidated by the same write that
+increments the revision, in the same transaction, or it must not exist.
+
+### Where it would go, if it were needed
+
+The pressure would not come from gameplay. It would come from reads that are
+shared, expensive and tolerant of being slightly stale — none of which describe a
+game view, and all of which describe a leaderboard:
+
+- **A global leaderboard or win-count ranking.** Aggregating win counts across
+  every match is the first query here that is not a point lookup, and the first
+  whose answer is identical for every caller. Cache the computed ranking under
+  one key with a short TTL, accept that it lags by that TTL, and say so in the
+  UI. This is the case Redis is actually for.
+- **`GET /api/users`, the opponent picker.** Shared across callers, changes only
+  when somebody registers. Cache the first page, invalidate on registration.
+  Worth doing only once the user table is large enough that pagination hurts,
+  which for a two-player game means never.
+- **Rate-limit counters.** The one place a shared store becomes necessary rather
+  than merely nice: `@nestjs/throttler` keeps its counters in process memory, so
+  budgets multiply by instance count. A second API instance is the trigger — not
+  traffic — and the fix is a Redis throttler storage, not a cache.
+
+That last one is the honest answer to "when would you add Redis to this?" It is
+not for speed. It is the moment the deployment stops being one process, because
+that is the moment in-memory state stops being correct. Everything else on this
+list is an optimisation; that one is a correctness fix, and it is recorded as a
+Low finding in the validation report rather than as a future idea.
+
+## What is deliberately absent
+
+- **No caching layer.** Nothing has been profiled, and a cache added in
+  anticipation is a second source of truth plus an invalidation problem.
+- **No WebSockets.** The brief says live synchronisation between browsers is not
+  required. Two seats share one page and one query cache; a second browser sees
+  current state on its next fetch.
+- **No microservices, no message queue, no Kubernetes.** One deployable, one
+  database, proportional to a two-player dice game.
+- **No AI opponent.** An optional extra, declined deliberately — it is the one
+  that would have changed the architecture rather than added to it. The shape it
+  would take (a pure `TurnStrategy` port beside `GameRules`, plus the scheduler
+  that would have to apply it) is in [assumptions.md](assumptions.md).

@@ -1,0 +1,259 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'infrastructure/fly/**'
+      - '.github/workflows/deploy-api.yml'
+  workflow_dispatch:
+    inputs:
+      image_digest:
+        description: >-
+          Existing image digest to roll back to (sha256:…). Leave blank to build
+          from HEAD. A rollback deploys an image that was already verified when
+          it was built; it never builds or publishes anything new.
+        required: false
+        type: string
+
+# Serialised, never cancelled. Aborting a half-finished deploy leaves the
+# environment in an unknown state — `cancel-in-progress` is right for CI and
+# actively dangerous here.
+concurrency:
+  group: deploy-api-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  NODE_VERSION: '22'
+  IMAGE_NAME: ghcr.io/${{ github.repository }}/api
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Nothing is published without this passing first.
+  #
+  # The previous generation of this repository gated its whole verify job on
+  # `inputs.image_tag == ''` while build-and-push ran under `always()`. A
+  # rollback dispatch therefore ran zero tests, zero lint and zero typecheck —
+  # and still built HEAD and pushed it, including the `latest` tag. The bug was
+  # not that verification was skipped for a rollback; that part is defensible,
+  # since a rollback deploys an image verified when it was built. The bug was
+  # that publishing happened anyway.
+  #
+  # Here, a rollback skips this job AND the build. The only path that publishes
+  # is the one that verified.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Full check suite
+    if: inputs.image_digest == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+
+      - name: Integration tests
+        env:
+          MONGODB_URI: mongodb://127.0.0.1:27017/dice-game-deploy-check
+        run: pnpm --filter @dice-game/api run test:integration
+
+  build:
+    name: Build and publish by digest
+    needs: verify
+    if: inputs.image_digest == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # GHCR rejects an uppercase path segment, and repository owners are not
+      # required to be lowercase. Doing this by hand rather than hoping.
+      - name: Lower-case the image reference
+        id: ref
+        run: echo "image=$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: ${{ steps.ref.outputs.image }}:${{ github.sha }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ github.event.repository.updated_at }}
+
+  deploy:
+    name: Deploy to Fly
+    needs: build
+    # Runs for a fresh build (needs succeeded) or a rollback (build skipped).
+    # Never runs if `build` actually failed.
+    if: always() && (needs.build.result == 'success' || inputs.image_digest != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail loudly and early rather than letting flyctl produce something
+      # cryptic three steps later.
+      - name: Require credentials
+        run: |
+          if [ -z "${{ secrets.FLY_API_TOKEN }}" ]; then
+            echo "::error::FLY_API_TOKEN is not set. Deployment cannot proceed."
+            exit 1
+          fi
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Resolve the image to deploy
+        id: image
+        run: |
+          set -euo pipefail
+          base="$(echo '${{ env.IMAGE_NAME }}' | tr '[:upper:]' '[:lower:]')"
+          if [ -n "${{ inputs.image_digest }}" ]; then
+            echo "image=${base}@${{ inputs.image_digest }}" >> "$GITHUB_OUTPUT"
+            echo "Rolling back to ${base}@${{ inputs.image_digest }}"
+          else
+            echo "image=${base}@${{ needs.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+            echo "Deploying ${base}@${{ needs.build.outputs.digest }}"
+          fi
+
+      # By digest, never by tag. A tag is mutable: deploying `:main` means
+      # deploying whatever `:main` points at by the time the machine pulls,
+      # which is not necessarily what this run built and verified.
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Machine count is not a fly.toml setting. `min_machines_running` does
+          # not cap it, and flyctl's first deploy creates an HA pair by default.
+          # The previous generation of this service ran split-brain in production
+          # for its entire life because of exactly this.
+          flyctl deploy \
+            --config infrastructure/fly/api.fly.toml \
+            --image "${{ steps.image.outputs.image }}" \
+            --ha=false \
+            --strategy rolling \
+            --wait-timeout 300
+
+      - name: Smoke test
+        env:
+          BASE: https://dice-game-api.fly.dev/api
+        run: |
+          set -euo pipefail
+
+          # Retries 5xx and connection failures only. A 4xx during a rollout is
+          # a real answer from a real server — retrying it converts a genuine
+          # regression into a slow green, which is the worst outcome a gate has.
+          request() {
+            local method="$1" path="$2" body="${3:-}" token="${4:-}"
+            local attempt=1 status
+            while [ "$attempt" -le 5 ]; do
+              local args=(-sS -o /tmp/body -w '%{http_code}' -X "$method" "${BASE}${path}")
+              [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
+              [ -n "$token" ] && args+=(-H "Authorization: Bearer ${token}")
+              # `|| echo 000` would be wrong here: curl has ALREADY written
+              # `000` via -w before exiting non-zero, so appending another
+              # produced `000000`, which matches neither arm below and returned
+              # immediately — meaning connection failures were not retried, the
+              # exact opposite of what this loop is for. Verified against a dead
+              # port before and after this fix.
+              status="$(curl "${args[@]}" 2>/dev/null || true)"
+              status="${status:-000}"
+              case "$status" in
+                000|5*) echo "  ${method} ${path} -> ${status}, retrying" >&2; sleep 4 ;;
+                *) echo "$status"; return 0 ;;
+              esac
+              attempt=$((attempt + 1))
+            done
+            echo "$status"; return 0
+          }
+
+          echo "Waiting for readiness"
+          ready=0
+          for _ in $(seq 1 40); do
+            if [ "$(request GET /health/ready)" = "200" ]; then
+              ready=$((ready + 1))
+              [ "$ready" -ge 3 ] && break
+            else
+              ready=0
+            fi
+            sleep 5
+          done
+          [ "$ready" -ge 3 ] || { echo "::error::Never became ready"; exit 1; }
+
+          echo "Liveness"
+          [ "$(request GET /health/live)" = "200" ] || { echo "::error::live failed"; exit 1; }
+
+          # A guarded endpoint must refuse an anonymous caller. This is the one
+          # assertion that would catch a deploy where the global guard stopped
+          # being registered — the failure mode this project has already had once.
+          echo "Default-deny"
+          code="$(request GET /users)"
+          [ "$code" = "401" ] || { echo "::error::/users answered ${code}, expected 401"; exit 1; }
+
+          echo "Smoke test passed."
+
+      - name: Record what was deployed
+        if: always()
+        run: |
+          {
+            echo "### API deploy"
+            echo ""
+            echo "- image: \`${{ steps.image.outputs.image }}\`"
+            echo "- commit: \`${{ github.sha }}\`"
+            echo "- mode: ${{ inputs.image_digest != '' && 'rollback' || 'build from HEAD' }}"
+          } >> "$GITHUB_STEP_SUMMARY"

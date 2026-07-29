@@ -1,0 +1,81 @@
+# Automated dependency updates.
+#
+# The previous generation of this repository had none: the only supply-chain
+# control was an `npm audit` gate in CI, which reports a vulnerability but never
+# fixes one. Updates therefore happened when somebody noticed, which is to say
+# rarely and all at once.
+#
+# Weekly, grouped, and capped. The grouping is the part that matters — an
+# ungrouped npm ecosystem on a workspace this size opens a dozen single-package
+# pull requests every Monday, and a review queue nobody reads is the same as no
+# updates at all.
+
+version: 2
+
+updates:
+  # ---- npm (pnpm workspace) ----
+  # One entry covers the whole workspace: Dependabot resolves the root
+  # pnpm-lock.yaml and updates every member package's manifest from it.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    versioning-strategy: increase-if-necessary
+    groups:
+      # Tooling churns fastest and carries the least risk — one pull request,
+      # merged on green.
+      dev-dependencies:
+        dependency-type: development
+        patterns:
+          - '*'
+      # Runtime dependencies ship to users, so they arrive separately and get
+      # read properly.
+      production-dependencies:
+        dependency-type: production
+        patterns:
+          - '*'
+    commit-message:
+      prefix: 'chore(deps)'
+      prefix-development: 'chore(deps-dev)'
+    labels:
+      - dependencies
+
+  # ---- GitHub Actions ----
+  # Actions are pinned by tag in the workflows; this keeps those tags current,
+  # including the security patches that never get announced.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(actions)'
+    # Only `dependencies` is listed anywhere in this file: Dependabot creates
+    # that label itself, but errors on any label the repository does not already
+    # have. A finer taxonomy is worth adding once the labels exist.
+    labels:
+      - dependencies
+
+  # ---- Docker ----
+  # Covers compose.yaml (the local MongoDB) and any Dockerfile at the repository
+  # root. A Dockerfile that moves under apps/ needs its directory added here —
+  # Dependabot does not search recursively from '/'.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: 'chore(docker)'
+    labels:
+      - dependencies

@@ -19,148 +19,340 @@ env:
   NODE_VERSION: '22'
 
 jobs:
-  # Static analysis and tests run as one job: they share an npm install, and
-  # splitting them would cost more in setup than it saves in parallelism.
+  # Static analysis and unit tests share one install, and turbo already runs the
+  # per-package tasks in parallel — splitting them into separate jobs would cost
+  # more in setup than it saves.
   verify:
-    name: Lint, typecheck & test
+    name: Format, lint, typecheck & test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+  # The domain-purity lint rule is the mechanism the whole architecture rests on:
+  # it is what stops a Mongoose import landing in the domain layer. A rule that
+  # is configured but never proven to fire is worth nothing — the previous
+  # generation of this repository had exactly such a check, comparing imports
+  # against a denylist that did not contain the frameworks it was meant to
+  # exclude, so it passed while proving nothing.
+  #
+  # This job writes a deliberately illegal file and asserts the linter rejects
+  # it. If someone drops `domainPurity` from the shared config, this goes red.
+  guard:
+    name: Prove the domain-purity guard fires
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      - name: Check formatting
-        run: npm run format:check
+      - name: A forbidden import in the domain must fail the lint
+        working-directory: apps/api
+        run: |
+          set -euo pipefail
+          cat > src/domain/__guard-probe.ts <<'PROBE'
+          import mongoose from 'mongoose';
+          import { Injectable } from '@nestjs/common';
+          import { randomInt } from 'node:crypto';
 
-      - name: Lint
-        run: npm run lint
+          export const leak = { mongoose, Injectable, randomInt, r: Math.random(), t: Date.now() };
+          PROBE
 
-      - name: Typecheck
-        run: npm run typecheck
+          if pnpm exec eslint src/domain/__guard-probe.ts; then
+            echo "::error::The domain-purity rule did NOT reject a file importing mongoose, @nestjs/common and node:crypto."
+            rm -f src/domain/__guard-probe.ts
+            exit 1
+          fi
 
-      - name: Test with coverage
-        run: npm run test:ci
+          echo "Guard fired as expected."
+          rm -f src/domain/__guard-probe.ts
 
-      - name: Upload coverage
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage/
-          retention-days: 7
+      - name: The probe must not survive the job
+        run: test ! -f apps/api/src/domain/__guard-probe.ts
 
-      - name: Build
-        run: npm run build
-
-  # Dependency review only works on pull_request events, so it is its own job
-  # rather than a step that would be skipped on push.
-  audit:
-    name: Dependency audit
+  # The unit suite runs against hand-written fakes, which is what keeps it fast
+  # and installable-with-nothing — and also what stops it from saying anything
+  # about the persistence adapters. This job is the other half: the API against
+  # a real mongod, pinned to the same `mongo:7.0` a contributor gets from
+  # compose.yaml, so CI and a laptop cannot disagree about server behaviour.
+  #
+  # It deliberately does not `needs: verify`. Chaining it would delay the
+  # slowest signal in the pipeline behind the fastest one, and keeping it
+  # independent means a formatting failure cannot hide a broken adapter.
+  #
+  # This job once carried `--passWithNoTests` while the suite was being written,
+  # and said so here so that a permanently empty-but-green job could not pass for
+  # a real gate. The flag is gone and 64 specs run against a real mongod, which
+  # makes this the strongest check in the pipeline rather than the emptiest.
+  integration:
+    name: API integration tests against MongoDB
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
+
+    services:
+      # GitHub publishes a service container's port into the job's own network
+      # namespace, so the connection string below is the one a contributor
+      # already uses locally — there is no host-name indirection to get wrong.
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        # mongod accepts TCP connections slightly before it will answer
+        # commands. Without a health check the first test would race the
+        # database and fail intermittently, which is the worst failure mode a
+        # gate can have — it trains people to re-run until green. GitHub holds
+        # every step in this job until the container reports healthy, so the
+        # race is prevented rather than retried around.
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
 
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
-      # Fails the build on a high-severity advisory in a production dependency.
-      # Dev-only advisories are reported but not blocking — a vulnerability in a
-      # test runner is not a vulnerability in the shipped artifact.
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+      # The suite is invoked through a pnpm filter rather than turbo, so turbo's
+      # `test:integration -> ^build` edge never applies. The API consumes
+      # `@dice-game/contracts` through that package's built `dist`, so it has to
+      # exist before the first import or every spec dies at collection time with
+      # a resolution error that looks nothing like its cause. `^...` selects the
+      # API's workspace dependencies without rebuilding the API itself.
+      - name: Build the API's workspace dependencies
+        run: pnpm --filter '@dice-game/api^...' run build
 
-      - name: Audit all dependencies (informational)
-        run: npm audit --audit-level=moderate || true
+      # There is no seed step here, deliberately. `pnpm db:seed` plants two demo
+      # players for a human to log in as; an integration test that leans on them
+      # asserts against fixtures it did not create, and then passes or fails for
+      # reasons that live in another file. Each spec builds what it needs and
+      # owns its own cleanup.
+      - name: Integration tests
+        env:
+          # 127.0.0.1 rather than `localhost`: the published port is IPv4-only,
+          # and a resolver that answers ::1 first turns this into a connection
+          # refused that reads as a broken database.
+          MONGODB_URI: mongodb://127.0.0.1:27017/dice-game
+        run: pnpm --filter @dice-game/api run test:integration
 
-  # Proves the image builds and the containerised app actually serves traffic.
-  # A Dockerfile that only compiles is not evidence of a working deployment.
-  docker:
-    name: Build & smoke-test image
+  dependencies:
+    name: Dependency scan
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs: verify
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Advisories only for what actually ships. A dev-only advisory should not
+      # block a merge, and treating it as if it did trains people to ignore the
+      # gate entirely.
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level=high
+
+  # Runs only on pull requests — the action has no baseline to diff against on a
+  # plain push.
+  # Advisory, deliberately. The action needs GitHub's Dependency graph enabled on
+  # the repository, and answers "Dependency review is not supported on this
+  # repository" when it is not — a red check that says nothing about the code and
+  # cannot be fixed from inside it. `Dependency scan` above runs
+  # `pnpm audit --prod --audit-level=high` and *does* block, so advisories are
+  # still gated; this adds the diff-level view when the feature is switched on at
+  # Settings → Code security.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+      # `continue-on-error` on the step rather than the job: at job level the
+      # workflow stops failing but the check itself still reports red, which is
+      # the thing worth avoiding — a permanently red check trains a reader to
+      # ignore the column.
+      - uses: actions/dependency-review-action@v4
+        continue-on-error: true
+        with:
+          fail-on-severity: high
+
+  # The API image cannot be built in the sandbox this repository was developed
+  # in — its egress proxy blocks Alpine's package repository and intercepts the
+  # npm registry — so CI is the first place the Dockerfile is exercised end to
+  # end. That is the whole reason this job exists rather than a local check.
+  #
+  # It builds only. Running the image would need MongoDB, which the integration
+  # job already covers against the same code; what is unproven here is the build
+  # itself: the multi-stage layout, `pnpm deploy --prod --legacy` materialising a
+  # real dependency tree out of pnpm's symlinked store, and the native argon2
+  # compile that needs python3/make/g++ present in the build stage.
+  docker:
+    name: API image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build image
+      # Context is the repository root, not apps/api: a pnpm workspace resolves
+      # @dice-game/contracts through the root lockfile, so a context rooted at
+      # the app cannot install.
+      - name: Build the API image
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: apps/api/Dockerfile
+          push: false
           load: true
-          tags: dice-game-service:ci
+          tags: dice-game-api:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            APP_VERSION=${{ github.sha }}
+            APP_VERSION=0.0.0-ci
             GIT_SHA=${{ github.sha }}
 
-      - name: Smoke test the running container
+      # A build that produced an image running as root would still be a build
+      # that passed. The Dockerfile sets USER node; this is what notices if that
+      # line is ever dropped.
+      - name: The image must not run as root
         run: |
           set -euo pipefail
-          docker run -d --name dice -p 3000:3000 dice-game-service:ci
+          user="$(docker image inspect dice-game-api:ci --format '{{.Config.User}}')"
+          echo "image user: '${user}'"
+          test "${user}" = "node"
 
-          echo "Waiting for readiness..."
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/readyz > /dev/null; then
-              echo "Ready after ${i} attempt(s)."
-              break
-            fi
-            if [ "$i" -eq 30 ]; then
-              echo "Service never became ready."
-              docker logs dice
-              exit 1
-            fi
-            sleep 1
-          done
+  # The only job that drives a real browser. Everything else in this pipeline
+  # asserts against jsdom, a supertest client, or reflection — none of which can
+  # tell you that a keyboard user can complete a turn, or that both seats render
+  # side by side, which is the thing the assignment actually asks for.
+  #
+  # Slow by nature: it builds both apps, starts them, and runs Chromium. It does
+  # not `needs: verify`, for the same reason the integration job does not —
+  # chaining the slowest signal behind the fastest delays it for no benefit.
+  e2e:
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
-          echo "Playing a full game through the public API..."
-          GAME_ID=$(curl -sf -X POST http://localhost:3000/api/v1/games \
-            -H 'Content-Type: application/json' \
-            -d '{"playerName":"CI Smoke Test","rounds":3}' \
-            | jq -r '.data.id')
-          test -n "$GAME_ID" && test "$GAME_ID" != "null"
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
 
-          for _ in 1 2 3; do
-            curl -sf -X POST "http://localhost:3000/api/v1/games/${GAME_ID}/rolls" > /dev/null
-          done
+    steps:
+      - uses: actions/checkout@v4
 
-          STATUS=$(curl -sf "http://localhost:3000/api/v1/games/${GAME_ID}" | jq -r '.data.status')
-          test "$STATUS" = "COMPLETED" || { echo "Expected COMPLETED, got ${STATUS}"; exit 1; }
+      - uses: pnpm/action-setup@v4
 
-          # A 4th roll must be refused.
-          CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-            -X POST "http://localhost:3000/api/v1/games/${GAME_ID}/rolls")
-          test "$CODE" = "409" || { echo "Expected 409, got ${CODE}"; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
-          echo "Verifying graceful shutdown honours SIGTERM..."
-          docker stop --timeout 15 dice
-          docker logs dice 2>&1 | grep -q "Drain complete" \
-            || { echo "Container did not drain cleanly."; docker logs dice; exit 1; }
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
-          echo "Smoke test passed."
+      # The development environment this suite was written in ships a
+      # pre-installed Chromium; a GitHub runner does not. `--with-deps` also
+      # pulls the shared libraries headless Chromium needs, which are absent
+      # from ubuntu-latest. `@playwright/test` is pinned to an exact version, so
+      # this fetches the one browser revision that release drives.
+      - name: Install Chromium
+        run: pnpm --filter @dice-game/web exec playwright install --with-deps chromium
 
-      - name: Container logs on failure
-        if: failure()
-        run: docker logs dice || true
+      # Through turbo, not `--filter @dice-game/web run test:e2e`. The filtered
+      # form skips turbo's dependency graph, so `packages/contracts` is never
+      # built and Playwright starts a web server that dies on
+      # `Cannot find module '@dice-game/contracts/dist/index.cjs'`. This is also
+      # the command the README documents, which is the better reason.
+      - name: End-to-end tests
+        env:
+          E2E_MONGODB_URI: mongodb://127.0.0.1:27017/dice-game-e2e
+        run: pnpm test:e2e
 
-      - name: Clean up
+      # The report carries the video of every scenario and the trace of anything
+      # that failed. A red e2e job with no artefact is a job you cannot act on
+      # without reproducing it locally, which defeats the point of running it
+      # here.
+      - name: Upload the report
         if: always()
-        run: docker rm -f dice || true
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7
+          if-no-files-found: ignore
+
+# Every job this pipeline is meant to have now exists. Two notes on what they do
+# and do not prove:
+#
+#   - Frontend component tests are not a separate job. `pnpm test` in `verify`
+#     runs turbo across every package, so apps/web's suite already runs there.
+#   - The `docker` job builds the API image but does not run it. Running it needs
+#     MongoDB, which `integration` already covers against the same code.

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "NestJS",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "types": ["node"],
+
+    // NestJS declares injected properties without initialisers and relies on the
+    // container to populate them. This is the one strictness flag the framework's
+    // programming model makes untenable; everything else in base.json stays on.
+    "strictPropertyInitialization": false
+  }
+}

@@ -1,7 +1,11 @@
 # Build artifacts — formatting compiled output is noise, and checking it would
 # make format:check depend on whether a build has run.
+node_modules/
 dist/
+build/
 coverage/
-client/dist/
-package-lock.json
-client/package-lock.json
+.next/
+.turbo/
+pnpm-lock.yaml
+test-results/
+playwright-report/

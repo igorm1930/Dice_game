@@ -1,0 +1,50 @@
+# The only thing on this host with a public port.
+#
+# Caddy terminates TLS, obtains and renews the certificate from Let's Encrypt
+# with no further configuration, and splits one origin between two containers:
+# everything under /api goes to the API, everything else to the Next.js client.
+#
+# One origin is the point. The two seats' access tokens live in
+# `sessionStorage`, so the client is same-origin with the API, which means no
+# CORS preflight, no cross-site cookie questions, and one certificate.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The API. `handle` rather than `handle_path` — the paths in the wire
+	# contract already carry the /api prefix (`ROUTES` in
+	# packages/contracts/src/routes.ts), so stripping it here would 404 every
+	# request against a server that never had routes without it.
+	handle /api/* {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	# The headers the application itself does not set. The API sends its own via
+	# Helmet, but it serves only JSON; this is the origin that serves the HTML
+	# and holds the tokens, and Next sets none of these by default.
+	header {
+		# HSTS. Note it commits the domain to HTTPS in browsers that have seen
+		# it — a year is the usual floor for preload, and the deployment is
+		# HTTPS-only anyway because Caddy redirects 80 to 443.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+
+		# No Content-Security-Policy here, and that is a decision rather than an
+		# omission. Next's App Router injects inline bootstrap scripts, so a
+		# useful policy needs `strict-dynamic` with a per-request nonce threaded
+		# through the framework — which cannot be done from a static header, and
+		# a `unsafe-inline` policy would be theatre. Recorded as an open gap in
+		# docs/final-validation-report.md rather than faked here.
+		-Server
+	}
+}

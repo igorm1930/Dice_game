@@ -1,0 +1,96 @@
+# Fly.io configuration for apps/api.
+#
+# Deploy from the repository root:
+#   fly deploy --config infrastructure/fly/api.fly.toml \
+#              --dockerfile apps/api/Dockerfile --ha=false
+#
+# Secrets are NEVER set here. `fly secrets set MONGODB_URI=… JWT_SECRET=…`
+# keeps them out of the repository and out of the image. This file carries only
+# non-secret configuration, and every value in [env] is validated by the Zod
+# schema at boot — a typo fails the deploy rather than the first request.
+
+app = "dice-game-api"
+primary_region = "iad"
+
+# These are bare top-level keys and must appear before the first table — TOML
+# assigns a bare key to whatever table precedes it, so putting them at the foot
+# of the file silently makes them `[[vm]]` fields that Fly ignores.
+#
+# Fly's default is SIGINT with a 5s timeout, which would SIGKILL the process
+# mid-drain. The API installs a SIGTERM handler and takes up to
+# SHUTDOWN_TIMEOUT_MS (10s) to finish in-flight requests.
+kill_signal = "SIGTERM"
+kill_timeout = "15s"
+
+[build]
+  dockerfile = "../../apps/api/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3001"
+  HOST = "0.0.0.0"
+  LOG_LEVEL = "info"
+  LOG_PRETTY = "false"
+  SERVICE_NAME = "dice-game-api"
+
+  # Fly terminates TLS at its proxy and forwards one hop. The API refuses to
+  # boot in production without this set, because the default of 0 would key
+  # every client on the proxy's address and collapse rate limiting onto one
+  # shared bucket — a self-inflicted outage that nothing else would catch.
+  TRUST_PROXY_HOPS = "1"
+
+  # Must exceed SHUTDOWN_TIMEOUT_MS below, or the drain is cut short.
+  SHUTDOWN_TIMEOUT_MS = "10000"
+
+  # Demo seeding is never automatic, and `db:seed` refuses under NODE_ENV=production
+  # regardless. Stated here so the intent is explicit rather than inferred.
+  SEED_DEMO_USERS = "false"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+
+  # The API holds no in-memory state now that MongoDB is the store, so more than
+  # one machine is safe: the revision compare-and-set orders concurrent writes
+  # correctly across instances. Kept at 1 because this is a demo and a second
+  # machine buys nothing but cost.
+  #
+  # Note that machine COUNT is not a fly.toml setting. `min_machines_running`
+  # does not cap it, and flyctl's first deploy creates an HA pair by default —
+  # which is how the previous generation of this service ran split-brain in
+  # production for its whole life while holding state in process memory. Deploy
+  # with --ha=false.
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  # Readiness gates traffic. It checks MongoDB, and fails FIRST during a SIGTERM
+  # drain so the proxy stops sending work before the server stops accepting it.
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "3s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/health/ready"
+
+# Liveness restarts the machine. It deliberately touches no dependency: a
+# process killed because its database blinked comes back into the same blinked
+# database, having converted a brief outage into a restart loop.
+[checks]
+  [checks.live]
+    type = "http"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/health/live"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpus = 1
