@@ -111,18 +111,65 @@ packages/
 
 ## Quick start
 
+Needs Node 20.11+, pnpm, and Docker (Docker Desktop on Windows and macOS).
+
 ```bash
 pnpm install --frozen-lockfile
-docker compose up -d          # MongoDB
-SEED_DEMO_USERS=true pnpm db:seed
+docker compose up -d          # MongoDB on 127.0.0.1:27017
 pnpm dev                      # API :3001, web :3000
-pnpm test                     # 462 tests
-pnpm test:integration         # 64 more, against real MongoDB
-pnpm test:e2e                 # 5 Playwright scenarios in a real browser
 ```
 
-`test:e2e` builds both apps and starts them on 3100/3101 against a database of
-its own, so it needs nothing running first — but it does need MongoDB, and it
+Then open **`http://localhost:3000`**.
+
+Use `localhost`, not `127.0.0.1`. The two are different origins to a browser,
+and the API's `CORS_ORIGIN` defaults to `http://localhost:3000`, so the page
+loads from the IP but every request is refused — and the client reports it as
+"Could not reach the server", which points at the wrong thing. Set `CORS_ORIGIN`
+if you want a different host.
+
+### Two demo players
+
+Seeding is opt-in: `db:seed` refuses unless `SEED_DEMO_USERS=true`, so it cannot
+happen as a side effect of running a setup command. Setting an environment
+variable for one command is the one place the shells differ.
+
+```bash
+# bash / zsh
+SEED_DEMO_USERS=true pnpm db:seed
+```
+
+```powershell
+# PowerShell
+$env:SEED_DEMO_USERS = "true"; pnpm db:seed
+```
+
+```bat
+:: cmd.exe
+set SEED_DEMO_USERS=true && pnpm db:seed
+```
+
+That creates `ada@example.com` / `demo-password-ada` and `grace@example.com` /
+`demo-password-grace`. It is idempotent, and it refuses outright when
+`NODE_ENV=production` — before it opens a connection. You can skip it entirely
+and use **Create account** on each seat instead.
+
+### The checks
+
+```bash
+pnpm test                     # 462 tests, no database or browser needed
+pnpm test:integration         # 64 more, against the real MongoDB above
+pnpm test:e2e                 # 5 Playwright scenarios in a real browser
+pnpm build
+```
+
+`test:e2e` needs a browser binary the first time, on any machine:
+
+```bash
+pnpm --filter @dice-game/web exec playwright install chromium
+```
+
+It then builds both apps and starts them on 3100/3101 against a database of its
+own, so nothing needs to be running first — but it does need MongoDB, and it
 will not attach to a dev server you already have up.
 
 ## The design, in one claim

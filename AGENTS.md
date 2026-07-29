@@ -84,7 +84,7 @@ Preserve these; each is asserted by a test, and each was a deliberate decision:
 ```bash
 pnpm install --frozen-lockfile
 docker compose up -d          # MongoDB
-SEED_DEMO_USERS=true pnpm db:seed   # two demo players
+pnpm db:seed                  # two demo players; needs SEED_DEMO_USERS=true, see below
 pnpm dev                      # api :3001, web :3000
 
 pnpm lint
@@ -97,6 +97,20 @@ pnpm format:check
 ```
 
 Turbo runs these per package; `--filter=@dice-game/api` scopes to one.
+
+Two of those lines are not portable, and both are in the path a first-time
+reader follows:
+
+- `SEED_DEMO_USERS=true pnpm db:seed` is bash. PowerShell reads it as a command
+  name and answers _"The term 'SEED_DEMO_USERS=true' is not recognized"_; use
+  `$env:SEED_DEMO_USERS = "true"; pnpm db:seed`. The README gives all three
+  shells. Everything else is portable — the `&&` inside `db:seed` runs under
+  `cmd.exe` via pnpm regardless of the interactive shell.
+- `pnpm test:e2e` needs a browser binary that no install step fetches:
+  `pnpm --filter @dice-game/web exec playwright install chromium`, once per
+  machine. CI does this explicitly and the development container ships Chromium
+  preinstalled, which is exactly why it went unnoticed — neither environment
+  ever runs the command a new clone runs.
 
 **Turbo deletes environment variables it was not told about.** Turbo 2 defaults
 to `envMode: strict`, so a task sees `globalEnv` plus its own `env` /
