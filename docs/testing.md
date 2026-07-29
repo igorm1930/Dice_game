@@ -6,7 +6,7 @@
 | ---------------------------- | ----------------------- | ----- | ------- |
 | Domain, services, components | `pnpm test`             | 460   | nothing |
 | API against a real database  | `pnpm test:integration` | 64    | MongoDB |
-| Browser end-to-end           | `pnpm test:e2e`         | —     | Phase 7 |
+| Browser end-to-end           | `pnpm test:e2e`         | 5     | MongoDB |
 
 460 = 374 api + 71 web + 15 contracts.
 
@@ -129,6 +129,38 @@ Also covered: independent sign-in per seat with token separation asserted on the
 and discard of a revoked one, the double-six message, the winner screen, and a
 `GAME_REVISION_CONFLICT` producing a refetch and _no_ visible error.
 
+## Browser end-to-end
+
+Five Playwright scenarios, run against a production build of both apps on ports
+3100/3101 and a database of their own. They cover the two-player match played
+out to a win with the win count surviving the next game, a double six, a
+refresh with two seats signed in, keyboard-only operation, and turn enforcement.
+
+Two things make them deterministic rather than hopeful:
+
+- **The dice are scripted.** `NODE_ENV=test` binds `DeterministicDiceGenerator`,
+  so `roundScoreAfter(0)` in a spec is a number derived from the script rather
+  than a literal somebody tuned until it passed. The generator is a singleton
+  with one cursor shared by every game, which is why `workers: 1` and why every
+  test winds the cursor to a known point before it starts — otherwise each
+  scenario would silently depend on the roll count of the one before it.
+- **`reuseExistingServer: false`.** A run that attached itself to a developer's
+  `pnpm dev` would be playing in the development database with real dice and
+  reporting the result as a pass.
+
+The one worth reading is `turn-enforcement.spec.ts`, because its first attempt
+proved nothing. It re-enabled Seat B's disabled Roll button in the DOM, clicked
+it, and waited for the server's 403. No request was ever sent: React decides
+whether to run `onClick` from the props in its own fiber, not from the
+attribute, so the click bubbles in and is dropped. The spec now asserts both
+halves separately — that the tampered click really fires and still gets nothing
+out of the browser, and that the request it would have made, sent with Seat B's
+own token, comes back `403 NOT_YOUR_TURN` with the game unmoved.
+
+It also rolls once as Seat A at the end, purely so that the "no request was
+sent" assertion has been watched to catch a request that _was_. Absence is not
+evidence until the detector has been seen to fire.
+
 ## Guards that are themselves tested
 
 A guard nobody has watched fail is a guard that might not work. This project
@@ -147,5 +179,6 @@ it.
 ```bash
 pnpm test                     # everything, no dependencies
 pnpm test:integration         # needs `docker compose up -d`
+pnpm test:e2e                 # needs MongoDB; builds and starts both apps itself
 pnpm --filter @dice-game/api run test    # one package
 ```

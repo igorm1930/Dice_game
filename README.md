@@ -5,10 +5,18 @@ players share one page; the React client sends commands and renders whatever the
 API returns.
 
 > **Not deployed.** The application is complete and tested — 460 unit tests, 64
-> integration tests against a real MongoDB — but no Fly app, Vercel project or
-> Atlas cluster exists, so there is no live URL yet. End-to-end browser tests are
-> still outstanding. See [docs/deployment.md](docs/deployment.md) for exactly
-> what is verified and what is blocked.
+> integration tests against a real MongoDB, and 5 Playwright scenarios driving a
+> real browser — but no Fly app, Vercel project or Atlas cluster exists, so there
+> is no live URL. See [docs/deployment.md](docs/deployment.md) for exactly what
+> is verified and what is blocked.
+
+![Two seats mid-match: Ada has rolled 5 and 2 for a round score of 7, her
+controls are live and Seat B's Roll and Hold are
+disabled.](apps/web/e2e/artifacts/match-in-progress.png)
+
+The screenshot is not a mock-up and not hand-taken. `two-player-match.spec.ts`
+writes it to `apps/web/e2e/artifacts/` partway through the run that plays a match
+out to a win, so it can only be as current as the last passing suite.
 
 ## Rules
 
@@ -80,7 +88,12 @@ SEED_DEMO_USERS=true pnpm db:seed
 pnpm dev                      # API :3001, web :3000
 pnpm test                     # 460 tests
 pnpm test:integration         # 64 more, against real MongoDB
+pnpm test:e2e                 # 5 Playwright scenarios in a real browser
 ```
+
+`test:e2e` builds both apps and starts them on 3100/3101 against a database of
+its own, so it needs nothing running first — but it does need MongoDB, and it
+will not attach to a dev server you already have up.
 
 ## The design, in one claim
 
@@ -133,7 +146,7 @@ unthrottled documentation paths hiding in exactly that gap.
 | 4. MongoDB persistence          | done — 64 integration tests on real mongod                                             |
 | 5. Next.js client               | done — reviewed, 71 tests                                                              |
 | 6. Docker + CI/CD               | image, Fly config and deploy workflow written; **image never built, nothing deployed** |
-| 7. Browser end-to-end           | in progress                                                                            |
+| 7. Browser end-to-end           | done — 5 scenarios, deterministic dice                                                 |
 | 8. Security hardening           | done inline; three gaps named in [docs/security.md](docs/security.md)                  |
 | 9. Documentation                | done                                                                                   |
 | 10. Final audit                 | not started                                                                            |

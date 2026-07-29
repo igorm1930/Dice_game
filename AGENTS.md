@@ -164,6 +164,27 @@ build stage.
 - E2E uses deterministic dice and a low winning score. That is why
   `MIN_WINNING_SCORE` is 2 rather than 10 — a match can be won in one hold.
 
+### Three ways a Playwright assertion here lies to you
+
+- **`getByRole`'s `name` is a substring match.** `{ name: 'Seat A' }` also matches
+  the region called "Seat A controls", so it resolves to two elements the moment
+  a match is on screen. The accessible names are fine; pass `exact: true`.
+- **`page.getByRole('alert')` is never empty.** Next.js's App Router mounts a
+  `next-route-announcer` — an empty `role="alert"` outside the app root, on every
+  page. Scope alert assertions to the region that would render the error.
+- **You cannot defeat a disabled React button from the DOM.** Setting
+  `button.disabled = false` and clicking dispatches a real click that bubbles,
+  and React still drops it: it decides whether to run `onClick` from the props in
+  its own fiber, not from the attribute. Nothing leaves the browser. To prove the
+  _server_ refuses something, send the request — `attemptRoll` in
+  `e2e/support/api.ts` returns the refusal instead of throwing on it.
+
+`apps/web/e2e/artifacts/match-in-progress.png` is committed on purpose — it is
+the README's screenshot, and having the suite produce it is what stops that
+image drifting from the app. The cost is that `pnpm test:e2e` rewrites it every
+run (the player names are randomised per run), so a clean tree goes dirty.
+`git checkout apps/web/e2e/artifacts` if you did not mean to update it.
+
 ### Build the fixture where the answer could differ
 
 The most expensive class of bug in this repository is not a wrong assertion. It
