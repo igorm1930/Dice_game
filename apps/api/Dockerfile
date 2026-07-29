@@ -81,8 +81,12 @@ RUN pnpm --filter @dice-game/contracts run build && \
     pnpm --filter @dice-game/api run build
 
 # `pnpm deploy` writes a real directory tree with production dependencies only.
-# --legacy is required while the workspace uses the v9 lockfile format.
-RUN pnpm --filter @dice-game/api --prod --legacy deploy /out
+# No `--legacy`: that flag belongs to pnpm 10, where `deploy` was reworked to
+# require `inject-workspace-packages`. This workspace pins pnpm 9.15.4 in
+# `packageManager`, which answers `Unknown option: 'legacy'` and fails the build
+# on its very last instruction. The comment here used to claim the flag was
+# required for the v9 lockfile — exactly backwards.
+RUN pnpm --filter @dice-game/api --prod deploy /out
 
 # ---------------------------------------------------------------------------
 # 3. Runtime

@@ -121,7 +121,7 @@ docker build -f apps/api/Dockerfile -t dice-game-api .
 
 Two things in it are not obvious:
 
-- **`pnpm deploy --prod --legacy`**, not `COPY node_modules`. pnpm's tree is
+- **`pnpm deploy --prod`**, not `COPY node_modules`. pnpm's tree is
   symlinks into a content-addressed store, so the usual copy produces broken
   links. The alternative — `node-linker=hoisted` — would defeat pnpm's
   strictness across the whole workspace to fix one build stage.

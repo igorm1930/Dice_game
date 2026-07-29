@@ -207,11 +207,19 @@ jobs:
 
   # Runs only on pull requests — the action has no baseline to diff against on a
   # plain push.
+  # Advisory, deliberately. The action needs GitHub's Dependency graph enabled on
+  # the repository, and answers "Dependency review is not supported on this
+  # repository" when it is not — a red check that says nothing about the code and
+  # cannot be fixed from inside it. `Dependency scan` above runs
+  # `pnpm audit --prod --audit-level=high` and *does* block, so advisories are
+  # still gated; this adds the diff-level view when the feature is switched on at
+  # Settings → Code security.
   dependency-review:
     name: Dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
@@ -312,10 +320,15 @@ jobs:
       - name: Install Chromium
         run: pnpm --filter @dice-game/web exec playwright install --with-deps chromium
 
+      # Through turbo, not `--filter @dice-game/web run test:e2e`. The filtered
+      # form skips turbo's dependency graph, so `packages/contracts` is never
+      # built and Playwright starts a web server that dies on
+      # `Cannot find module '@dice-game/contracts/dist/index.cjs'`. This is also
+      # the command the README documents, which is the better reason.
       - name: End-to-end tests
         env:
           E2E_MONGODB_URI: mongodb://127.0.0.1:27017/dice-game-e2e
-        run: pnpm --filter @dice-game/web run test:e2e
+        run: pnpm test:e2e
 
       # The report carries the video of every scenario and the trace of anything
       # that failed. A red e2e job with no artefact is a job you cannot act on
