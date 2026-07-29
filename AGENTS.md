@@ -164,6 +164,37 @@ build stage.
 - E2E uses deterministic dice and a low winning score. That is why
   `MIN_WINNING_SCORE` is 2 rather than 10 — a match can be won in one hold.
 
+### Build the fixture where the answer could differ
+
+The most expensive class of bug in this repository is not a wrong assertion. It
+is a **correct assertion over a fixture in which it cannot fail**, and it has
+appeared four times.
+
+The rule: when a test asserts that behaviour follows from a _particular source_,
+construct the case where that source and every plausible alternative **disagree**.
+If you cannot construct it, the test is not testing what its name says.
+
+Worked example, and the reason `game-board.test.tsx` has a `disagree` block. The
+client must disable Roll because the server sent `canRoll: false`, not because it
+worked out whose turn it is. Every early fixture happened to satisfy
+`canRoll === (viewerSeat === activePlayer)` — so a client deriving legality
+locally passed all 44 tests, **including the one named "disables Roll because the
+server said canRoll is false, not because the client decided"**. The fix is a
+position where it _is_ your turn and the server still says no: a finished game.
+
+The others, same shape:
+
+- The winner fixture gave the server-named winner the higher score too, so
+  `nameOf(view, view.winner)` could be swapped for a score comparison undetected.
+- `startNewGame`'s round-score reset could be deleted with the suite green,
+  because every fixture arrived through a hold that had already zeroed it.
+- The immutability tests only ever passed frozen states, so `Object.freeze` was
+  doing the work the assertion claimed.
+
+The reliable way to find these is to break the code and check the suite notices.
+"Does it pass?" is a much weaker question than "what would I have to break for it
+to fail?".
+
 ## Things that bit us before
 
 - A router mounted without its auth middleware shipped five unauthenticated
@@ -175,3 +206,7 @@ build stage.
   Every path that publishes an image runs the full check suite first.
 - Fly's first deploy creates an HA pair by default and `min_machines_running`
   does not cap machine count.
+- Configuration that looks applied and is not: `sanitizeFilter` passed through
+  `openUri` is filed where Mongoose's `Query` never reads it, and `dbName`
+  silently overrides the database named in `MONGODB_URI`. Both logged success.
+  Check the effect, not the setting.
