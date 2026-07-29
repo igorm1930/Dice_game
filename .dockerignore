@@ -1,0 +1,30 @@
+# The build context is the repository root — see apps/api/Dockerfile.
+#
+# Everything here either bloats the context, invalidates cache layers for no
+# reason, or must never reach an image at all.
+
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
+
+# Secrets never enter the context, whatever .gitignore says about them.
+.env
+.env.*
+!.env.example
+
+.git
+.github
+docs
+test-results
+playwright-report
+
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.integration.spec.ts
+
+*.md
+!README.md
