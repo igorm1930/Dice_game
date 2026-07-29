@@ -237,11 +237,28 @@ describe('announcing what just happened', () => {
 
   it('mounts the region empty and writes the first sentence into it afterwards', async () => {
     const api = installFakeApi();
-    bothSeatsAtBoard(api);
+
+    api.route('GET', ROUTES.auth.me, () => ok({ ...ADA, email: 'ada@example.com' }));
+    api.route('GET', ROUTES.users.list, () =>
+      ok({ items: [ADA, GRACE], total: 2, limit: 25, offset: 0, hasMore: false }),
+    );
+    api.route('POST', ROUTES.games.create, () => ok(gameView(), 201));
+    api.route('GET', ROUTES.games.byId(GAME_ID), () => ok(gameView()));
+
+    seatAlreadySignedIn('A', ADA, TOKEN_A);
+
+    const { user } = renderPage();
+
+    // Creating a match is the path where this bites: the response *is* the
+    // creator's view and is seeded straight into the cache, so the board mounts
+    // with its first sentence already available. (Arriving at a board whose
+    // fetch is still in flight hides the defect, because the region is empty
+    // for a moment anyway.)
+    await screen.findByRole('option', { name: 'Grace' });
+    await user.selectOptions(screen.getByLabelText('Opponent'), GRACE.id);
 
     const watcher = watchLiveRegion();
-
-    renderPage();
+    await user.click(screen.getByRole('button', { name: 'Start match' }));
 
     await waitFor(() => {
       expect(liveRegion()).toHaveTextContent('Waiting for Ada to roll.');
@@ -249,9 +266,10 @@ describe('announcing what just happened', () => {
     watcher.stop();
 
     // A screen reader does not announce content that was already inside a live
-    // region when the region entered the accessibility tree. Mounting with the
-    // sentence already in place therefore loses the first message of every
-    // match — so the region has to arrive empty.
+    // region when the region entered the accessibility tree — that content just
+    // came with the furniture. Mounting with the sentence in place therefore
+    // loses the first message of every match, so the region has to arrive empty
+    // and be written into afterwards.
     expect(watcher.seen[0]).toBe('');
     expect(watcher.seen.at(-1)).toBe('Waiting for Ada to roll.');
   });
