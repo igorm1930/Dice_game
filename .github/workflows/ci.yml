@@ -219,9 +219,59 @@ jobs:
       - uses: actions/dependency-review-action@v4
         with:
           fail-on-severity: high
-# Still to come, with the phases that produce them:
-#   - frontend component tests (Phase 5)
-#   - Docker build validation for apps/api and apps/web (Phase 6)
+
+  # The API image cannot be built in the sandbox this repository was developed
+  # in — its egress proxy blocks Alpine's package repository and intercepts the
+  # npm registry — so CI is the first place the Dockerfile is exercised end to
+  # end. That is the whole reason this job exists rather than a local check.
+  #
+  # It builds only. Running the image would need MongoDB, which the integration
+  # job already covers against the same code; what is unproven here is the build
+  # itself: the multi-stage layout, `pnpm deploy --prod --legacy` materialising a
+  # real dependency tree out of pnpm's symlinked store, and the native argon2
+  # compile that needs python3/make/g++ present in the build stage.
+  docker:
+    name: API image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Context is the repository root, not apps/api: a pnpm workspace resolves
+      # @dice-game/contracts through the root lockfile, so a context rooted at
+      # the app cannot install.
+      - name: Build the API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          load: true
+          tags: dice-game-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            APP_VERSION=0.0.0-ci
+            GIT_SHA=${{ github.sha }}
+
+      # A build that produced an image running as root would still be a build
+      # that passed. The Dockerfile sets USER node; this is what notices if that
+      # line is ever dropped.
+      - name: The image must not run as root
+        run: |
+          set -euo pipefail
+          user="$(docker image inspect dice-game-api:ci --format '{{.Config.User}}')"
+          echo "image user: '${user}'"
+          test "${user}" = "node"
+
+# Still to come, with the phase that produces it:
 #   - Playwright smoke test of the two-user flow with deterministic dice (Phase 7)
-# These are deliberately absent rather than stubbed: a job that passes because it
-# has nothing to run is worse than a missing one, because it reads as coverage.
+# Deliberately absent rather than stubbed: a job that passes because it has
+# nothing to run is worse than a missing one, because it reads as coverage.
+#
+# Frontend component tests are NOT missing — `pnpm test` in the verify job runs
+# turbo across every package, so apps/web's suite already runs there. Listing
+# them here as pending would have been the same lie in the other direction.
