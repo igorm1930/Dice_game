@@ -28,8 +28,10 @@ const BASE = cx(
 );
 
 const VARIANTS: Readonly<Record<ButtonVariant, string>> = Object.freeze({
+  // Hover goes darker, not lighter. Lightening it dropped white-on-fill to
+  // 2.79:1; --color-accent-deep keeps the hovered state at 7.64:1.
   primary:
-    'bg-accent-strong text-white hover:bg-accent enabled:active:translate-y-px shadow-lg shadow-accent-strong/20',
+    'bg-accent-strong text-white hover:bg-accent-deep enabled:active:translate-y-px shadow-lg shadow-accent-strong/20',
   secondary:
     'bg-raised text-ink border border-line hover:border-accent enabled:active:translate-y-px',
   quiet: 'bg-transparent text-subtle border border-transparent hover:text-ink hover:border-line',

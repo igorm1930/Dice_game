@@ -72,7 +72,18 @@ export const envVarsSchema = z.object({
 
   // ---- Database ----
   MONGODB_URI: z.string().min(1).default('mongodb://localhost:27017/dice-game'),
-  MONGODB_DB_NAME: z.string().min(1).default('dice-game'),
+  /**
+   * An **override**, not a default.
+   *
+   * Mongoose's `dbName` connect option wins over the database named in the URI,
+   * so giving this a default meant `MONGODB_URI=…/my-db` silently connected to
+   * `dice-game` instead — and logged a cheerful "Connected to MongoDB database
+   * dice-game", which reads as success. An Atlas connection string normally
+   * names its database, so the common production case was the broken one.
+   *
+   * Unset means the URI decides.
+   */
+  MONGODB_DB_NAME: z.string().min(1).optional(),
 
   // ---- Authentication ----
   JWT_SECRET: z.string().min(1).default(DEV_JWT_SECRET),
@@ -221,7 +232,8 @@ export interface AppConfig {
   readonly host: string;
   readonly mongo: {
     readonly uri: string;
-    readonly dbName: string;
+    /** Undefined means the database named in {@link uri} is used. */
+    readonly dbName: string | undefined;
   };
   readonly auth: {
     readonly jwtSecret: string;

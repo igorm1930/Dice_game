@@ -130,6 +130,28 @@ describe('starting a match', () => {
     expect(alert).toHaveTextContent('INVALID_OPPONENT');
   });
 
+  it('says what to do when the creator is the only account, instead of offering an empty picker', async () => {
+    const api = installFakeApi();
+    bothSeatsSignedIn(api);
+    // First run: one account exists, and it is the creator's. Filtering the
+    // creator out leaves the picker holding nothing but its placeholder.
+    api.route('GET', ROUTES.users.list, () =>
+      ok({ items: [ADA], total: 1, limit: 25, offset: 0, hasMore: false }),
+    );
+
+    renderPage();
+
+    expect(
+      await screen.findByText(/yours is the only account on this server/i),
+    ).toBeInTheDocument();
+
+    // No picker to get stuck in, and no submit to press. The old hint about
+    // needing two accounts appeared only while Seat A was signed out — which is
+    // to say it vanished exactly when somebody needed it.
+    expect(screen.queryByLabelText('Opponent')).not.toBeInTheDocument();
+    expect(form().getByRole('button', { name: 'Start match' })).toBeDisabled();
+  });
+
   it('reports a user list that could not be loaded, and offers a retry', async () => {
     const api = installFakeApi();
     bothSeatsSignedIn(api);

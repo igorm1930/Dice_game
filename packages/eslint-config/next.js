@@ -39,6 +39,39 @@ export default tseslint.config(
       ...nextPlugin.configs['core-web-vitals'].rules,
     },
   },
+  /**
+   * No hand-written API path, anywhere in the client.
+   *
+   * Every URL comes from the contract's `ROUTES` table, including the
+   * parameterised ones. This is a linter rule rather than a test for the same
+   * reason domain purity is: a test that renders a component and compares the
+   * path it requested against `ROUTES.games.roll(id)` passes *identically*
+   * whether the component read the table or typed the string, because both
+   * sides of the assertion end up as the same characters. A hardcoded literal
+   * is invisible to the assertion and obvious to a pattern.
+   *
+   * Both node types are covered, because `` `/api/games/${id}` `` is a
+   * TemplateLiteral rather than a Literal and would otherwise walk straight
+   * past.
+   */
+  {
+    files: ['**/src/**/*.ts', '**/src/**/*.tsx'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Literal[value=/^\\/api\\//]',
+          message:
+            'API paths come from the contract’s ROUTES table. Import ROUTES from @dice-game/contracts instead of writing the path.',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/^\\/api\\//]',
+          message:
+            'API paths come from the contract’s ROUTES table. Import ROUTES from @dice-game/contracts instead of building the path.',
+        },
+      ],
+    },
+  },
   {
     files: ['**/*.test.ts', '**/*.test.tsx', '**/e2e/**/*.ts'],
     rules: {

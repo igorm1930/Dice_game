@@ -41,7 +41,9 @@ export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function T
         aria-describedby={describedBy.length > 0 ? describedBy : undefined}
         className={cx(
           'w-full rounded-lg border bg-canvas/70 px-3 py-2.5 text-sm text-ink',
-          'placeholder:text-subtle/60 transition',
+          // `/60` measured 3.84:1 against the field's fill. `/80` is 5.96:1 and
+          // still reads as placeholder rather than as a typed value.
+          'placeholder:text-subtle/80 transition',
           'focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-focus',
           error != null ? 'border-danger' : 'border-line hover:border-accent/60',
           className,

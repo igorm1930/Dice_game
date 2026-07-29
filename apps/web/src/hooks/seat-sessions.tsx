@@ -1,6 +1,7 @@
 'use client';
 
 import { type AuthSession } from '@dice-game/contracts';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   createContext,
   type ReactNode,
@@ -12,6 +13,7 @@ import {
 } from 'react';
 
 import { fetchMe, logout } from '@/lib/api';
+import { belongsToSeat } from '@/lib/query-keys';
 import { SEAT_IDS, type SeatId } from '@/lib/seats';
 import {
   clearSeatSession,
@@ -56,6 +58,7 @@ const INITIAL_STATE: Readonly<Record<SeatId, SeatAuthState>> = Object.freeze({
 
 export function SeatSessionsProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const [seats, setSeats] = useState<Readonly<Record<SeatId, SeatAuthState>>>(INITIAL_STATE);
+  const queryClient = useQueryClient();
 
   /**
    * Restoring a refresh.
@@ -129,29 +132,43 @@ export function SeatSessionsProvider({ children }: { children: ReactNode }): Rea
     setSeats((current) => ({ ...current, [seat]: { status: 'signed-in', session: stored } }));
   }, []);
 
-  const expireSeat = useCallback((seat: SeatId) => {
-    clearSeatSession(seat);
-    setSeats((current) => ({ ...current, [seat]: { status: 'signed-out' } }));
-  }, []);
+  /**
+   * Drops a seat.
+   *
+   * The cached queries go with it. `enabled: false` alone would only stop the
+   * seat *refetching*: the last answer the departing token produced stays in the
+   * cache, and TanStack Query keeps handing it back. That is how a signed-out
+   * panel ends up rendering an enabled Roll button, and how the next person to
+   * sit here would be shown the previous occupant's `availableActions` until
+   * their own fetch resolves.
+   */
+  const expireSeat = useCallback(
+    (seat: SeatId) => {
+      clearSeatSession(seat);
+      queryClient.removeQueries({ predicate: (query) => belongsToSeat(query.queryKey, seat) });
+      setSeats((current) => ({ ...current, [seat]: { status: 'signed-out' } }));
+    },
+    [queryClient],
+  );
 
   const signOut = useCallback(
     (seat: SeatId) => {
-      setSeats((current) => {
-        const seatState = current[seat];
+      // The token is read from the closure, not from inside a `setSeats`
+      // updater. An updater must be pure — React invokes it twice under
+      // StrictMode — and one deliberate sign-out must produce exactly one
+      // logout request.
+      const seatState = seats[seat];
 
-        if (seatState.status === 'signed-in') {
-          // Best effort, and deliberately not awaited: the seat is signed out
-          // here whether or not the call lands. If it does land, every token
-          // previously issued to that user stops verifying.
-          void logout(seatState.session.accessToken).catch(() => undefined);
-        }
-
-        return current;
-      });
+      if (seatState.status === 'signed-in') {
+        // Best effort, and deliberately not awaited: the seat is signed out
+        // here whether or not the call lands. If it does land, every token
+        // previously issued to that user stops verifying.
+        void logout(seatState.session.accessToken).catch(() => undefined);
+      }
 
       expireSeat(seat);
     },
-    [expireSeat],
+    [seats, expireSeat],
   );
 
   const value = useMemo<SeatSessionsValue>(
@@ -182,4 +199,16 @@ export function useSeatToken(seat: SeatId): string | null {
   const state = useSeat(seat);
 
   return state.status === 'signed-in' ? state.session.accessToken : null;
+}
+
+/**
+ * The id of the user currently occupying a seat, or `null` when nobody is.
+ *
+ * This is what a seat's cache entries are keyed by, so that a seat changing
+ * hands changes the key rather than inheriting the previous occupant's answers.
+ */
+export function useSeatUserId(seat: SeatId): string | null {
+  const state = useSeat(seat);
+
+  return state.status === 'signed-in' ? state.session.user.id : null;
 }

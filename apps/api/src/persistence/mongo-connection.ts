@@ -29,9 +29,17 @@ export const SERVER_SELECTION_TIMEOUT_MS = 5000;
  * choice for the same reason: paths and reasons, never values.
  */
 export class MongoConnectionError extends Error {
-  constructor(dbName: string, cause: unknown) {
+  constructor(dbName: string | undefined, cause: unknown) {
+    // Naming where the database came from, not just what it was called. The
+    // two most confusing failures here are "connected to the wrong database"
+    // and "could not connect at all", and they read identically otherwise.
+    const target =
+      dbName === undefined
+        ? 'the database named in MONGODB_URI'
+        : `"${dbName}" (from MONGODB_DB_NAME)`;
+
     super(
-      `Refusing to start: could not connect to MongoDB database "${dbName}". Check MONGODB_URI and that the server is reachable.`,
+      `Refusing to start: could not connect to MongoDB ${target}. Check MONGODB_URI and that the server is reachable.`,
       { cause },
     );
     this.name = 'MongoConnectionError';
@@ -95,7 +103,10 @@ export class MongoConnection implements OnModuleInit, OnApplicationShutdown {
     const { uri, dbName } = this.config.mongo;
 
     const options: ConnectOptions = {
-      dbName,
+      // Passed ONLY when explicitly configured. Mongoose's `dbName` overrides
+      // the database in the URI, so passing a defaulted value here would make
+      // the URI's own database silently irrelevant.
+      ...(dbName === undefined ? {} : { dbName }),
       serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS,
       /**
        * Indexes are built below, explicitly and awaited. Mongoose's automatic
@@ -115,8 +126,10 @@ export class MongoConnection implements OnModuleInit, OnApplicationShutdown {
 
     await this.createIndexes();
 
-    // The database name, not the URI. See `MongoConnectionError`.
-    this.logger.log(`Connected to MongoDB database "${dbName}".`);
+    // Report what was actually connected to, read back off the connection —
+    // not what was configured. Those were the same thing right up until they
+    // were not, and the log said "dice-game" either way.
+    this.logger.log(`Connected to MongoDB database "${this.connection.name}".`);
   }
 
   /**

@@ -12,10 +12,11 @@ import {
 } from '@dice-game/contracts';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, type UseMutationResult } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { useSeat, useSeatSessions } from '@/hooks/seat-sessions';
+import { useFocusOnChange } from '@/hooks/use-focus-on-change';
 import { login, register as registerAccount } from '@/lib/api';
 import { cx } from '@/lib/cx';
 import { SEAT_LABELS, type SeatId } from '@/lib/seats';
@@ -51,8 +52,20 @@ export function SeatAuthPanel({ seat }: { seat: SeatId }): React.JSX.Element {
   const [mode, setMode] = useState<Mode>('sign-in');
   const headingId = fieldId(seat, 'heading');
 
+  /**
+   * Signing in replaces this whole panel, taking the submit button — and with it
+   * the keyboard user's place in the document — away. Focus lands here instead.
+   * The `restoring` transition is exempt: that one settles by itself on load and
+   * nobody asked for it.
+   */
+  const panelRef = useRef<HTMLElement>(null);
+
+  useFocusOnChange(state.status, panelRef, 'restoring');
+
   return (
     <section
+      ref={panelRef}
+      tabIndex={-1}
       aria-labelledby={headingId}
       className="flex flex-col gap-4 rounded-2xl border border-line bg-surface/80 p-5 shadow-xl shadow-black/20 backdrop-blur"
     >
@@ -82,6 +95,10 @@ export function SeatAuthPanel({ seat }: { seat: SeatId }): React.JSX.Element {
           <p className="text-lg font-semibold text-ink">{state.session.user.displayName}</p>
           <Button
             variant="danger"
+            // Both panels render a "Sign out"; the owning section's label is not
+            // part of a button's accessible name, so a rotor would list the two
+            // of them identically. Each says which seat it belongs to.
+            aria-label={`Sign out, ${SEAT_LABELS[seat]}`}
             onClick={() => {
               signOut(seat);
             }}

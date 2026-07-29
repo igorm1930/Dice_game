@@ -8,15 +8,25 @@ import { isRefetchable } from '@/lib/api-client';
 import { queryKeys } from '@/lib/query-keys';
 import { type SeatId } from '@/lib/seats';
 
-import { useSeatToken } from './seat-sessions';
+import { useSeatToken, useSeatUserId } from './seat-sessions';
+
+/**
+ * The identity a seat's cache entry belongs to when nobody is sitting in it.
+ *
+ * A signed-out seat runs no query — `enabled` is false — but it still needs a
+ * key, and that key must not be one a real user could ever hold. Reusing the
+ * previous occupant's key is precisely the bug this constant exists to make
+ * impossible.
+ */
+const NOBODY = 'signed-out';
 
 /**
  * The game, as one seat sees it.
  *
- * Keyed by game id *and* seat because the answer differs per caller:
- * `availableActions` and `viewerSeat` are relative to the token that asked. Two
- * seats therefore hold two cache entries for one game, and both are refreshed
- * together after any command.
+ * Keyed by game id, seat *and* the user in that seat, because the answer differs
+ * per caller: `availableActions` and `viewerSeat` are relative to the token that
+ * asked. Two seats therefore hold two cache entries for one game, and both are
+ * refreshed together after any command.
  *
  * There is no polling and no interval. Live synchronisation between separate
  * browsers is explicitly out of scope; within this page, an action by either
@@ -24,9 +34,10 @@ import { useSeatToken } from './seat-sessions';
  */
 export function useGameQuery(gameId: string, seat: SeatId): UseQueryResult<GameView> {
   const token = useSeatToken(seat);
+  const userId = useSeatUserId(seat);
 
   return useQuery({
-    queryKey: queryKeys.game(gameId, seat),
+    queryKey: queryKeys.game(gameId, seat, userId ?? NOBODY),
     queryFn: ({ signal }) => {
       if (token === null) {
         throw new Error('The game query ran for a seat with no token.');
@@ -41,9 +52,10 @@ export function useGameQuery(gameId: string, seat: SeatId): UseQueryResult<GameV
 /** The opponent picker's list, fetched with the creating seat's own token. */
 export function useUsersQuery(seat: SeatId): UseQueryResult<UserList> {
   const token = useSeatToken(seat);
+  const userId = useSeatUserId(seat);
 
   return useQuery({
-    queryKey: queryKeys.users(seat),
+    queryKey: queryKeys.users(seat, userId ?? NOBODY),
     queryFn: ({ signal }) => {
       if (token === null) {
         throw new Error('The user list query ran for a seat with no token.');
@@ -96,6 +108,7 @@ export function useGameCommand(
   seat: SeatId,
 ): GameCommand {
   const token = useSeatToken(seat);
+  const userId = useSeatUserId(seat);
   const queryClient = useQueryClient();
 
   const mutation = useMutation<GameView, Error, number>({
@@ -112,7 +125,10 @@ export function useGameCommand(
       // into that seat's entry — the animation reacts to this without waiting
       // for a round trip. The other seat's entry is stale by definition, so both
       // are then invalidated and refetched.
-      queryClient.setQueryData(queryKeys.game(gameId, seat), view);
+      if (userId !== null) {
+        queryClient.setQueryData(queryKeys.game(gameId, seat, userId), view);
+      }
+
       void queryClient.invalidateQueries({ queryKey: queryKeys.gameRoot(gameId) });
     },
 

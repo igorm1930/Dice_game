@@ -1,12 +1,22 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { type ReactElement } from 'react';
+import { type ReactElement, StrictMode } from 'react';
 
 import HomePage from '@/app/page';
 import { SeatSessionsProvider } from '@/hooks/seat-sessions';
 import { type SeatId } from '@/lib/seats';
 import { writeActiveGameId, writeSeatSession } from '@/lib/session-storage';
+
+export interface RenderPageOptions {
+  /**
+   * Wraps the page in `<StrictMode>`, which double-invokes render functions,
+   * effects and — the reason this option exists — the updater functions passed
+   * to `setState`. An impure updater that fires a request is invisible without
+   * it and doubles every request with it.
+   */
+  strict?: boolean;
+}
 
 /**
  * Renders the real page inside the real providers.
@@ -15,7 +25,9 @@ import { writeActiveGameId, writeSeatSession } from '@/lib/session-storage';
  * property most of them are about — two seats, two tokens, one page — only
  * exists when both panels are mounted together.
  */
-export function renderPage(): RenderResult & { user: ReturnType<typeof userEvent.setup> } {
+export function renderPage(
+  options: RenderPageOptions = {},
+): RenderResult & { user: ReturnType<typeof userEvent.setup> } {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false, refetchOnWindowFocus: false, gcTime: 0 },
@@ -23,13 +35,15 @@ export function renderPage(): RenderResult & { user: ReturnType<typeof userEvent
     },
   });
 
-  const ui: ReactElement = (
+  const page: ReactElement = (
     <QueryClientProvider client={queryClient}>
       <SeatSessionsProvider>
         <HomePage />
       </SeatSessionsProvider>
     </QueryClientProvider>
   );
+
+  const ui = options.strict === true ? <StrictMode>{page}</StrictMode> : page;
 
   return { ...render(ui), user: userEvent.setup() };
 }

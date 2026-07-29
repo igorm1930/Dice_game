@@ -14,7 +14,17 @@
   --color-ink: #eef3ff;
   --color-subtle: #9fb0dc;
   --color-accent: #8093ff;
-  --color-accent-strong: #5b6ef5;
+
+  /* The primary button's fill, and the only place white text sits on a colour.
+     It was #5b6ef5, which is 4.21:1 against white — below the 4.5:1 AA floor —
+     and its hover state lightened to --color-accent, which fell to 2.79:1. So
+     the hover is now a *darker* shade rather than a lighter one, and both ends
+     clear AA: #4453d6 is 6.08:1 and #3a46b8 is 7.64:1.
+
+     --color-accent stays as it is: it is only ever used as text on a dark
+     surface, where it is the light end that carries the contrast. */
+  --color-accent-strong: #4453d6;
+  --color-accent-deep: #3a46b8;
   --color-active: #34d399;
   --color-danger: #fb7185;
   --color-gold: #fbbf24;
@@ -24,8 +34,7 @@
   --color-focus: #ffd233;
 
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    sans-serif;
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 
 @layer base {
@@ -36,8 +45,7 @@
   body {
     background:
       radial-gradient(1100px 600px at 15% -10%, #1b2a5c 0%, transparent 60%),
-      radial-gradient(900px 500px at 100% 0%, #10304a 0%, transparent 55%),
-      var(--color-canvas);
+      radial-gradient(900px 500px at 100% 0%, #10304a 0%, transparent 55%), var(--color-canvas);
     background-attachment: fixed;
     color: var(--color-ink);
     font-family: var(--font-sans);
@@ -53,7 +61,15 @@
    * without those classes is still visibly focusable. The previous generation
    * of this UI shipped focus styling on three text inputs and no buttons.
    * ------------------------------------------------------------------ */
-  :where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex='-1'])):focus-visible {
+  :where(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    summary,
+    [tabindex]:not([tabindex='-1'])
+  ):focus-visible {
     outline: 3px solid var(--color-focus);
     outline-offset: 2px;
   }
@@ -120,9 +136,16 @@
   animation: bust-flash 800ms ease-in-out 2;
 }
 
+/* Every animation in the app, not only the two written above. `animate-spin` is
+   a Tailwind utility, so it lived outside this block and carried on rotating for
+   a reader who had asked it not to. This rule is unlayered and Tailwind's
+   utilities are layered, so it wins without `!important`. The spinner is always
+   paired with visible text — see `ui/spinner.tsx` — so a still ring loses
+   nothing. */
 @media (prefers-reduced-motion: reduce) {
   .die-tumbling,
-  .bust-flashing {
+  .bust-flashing,
+  .animate-spin {
     animation: none;
   }
 }

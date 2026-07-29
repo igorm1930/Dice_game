@@ -52,7 +52,9 @@ export function ErrorAlert({
   return (
     <Alert tone="error" className={className}>
       {messageFor(error)}
-      {code !== null && <span className="ml-2 font-mono text-[11px] opacity-70">{code}</span>}
+      {/* The code is small print, not faint print. At `opacity-70` it measured
+          3.5:1 against the alert's own fill; at full opacity it is 5.66:1. */}
+      {code !== null && <span className="ml-2 font-mono text-[11px]">{code}</span>}
     </Alert>
   );
 }

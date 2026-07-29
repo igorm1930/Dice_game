@@ -8,17 +8,21 @@ import {
   type FakeApi,
   type FakeResponse,
   installFakeApi,
+  noContent,
   ok,
 } from '@/test/fake-api';
 import {
   ACTIVE_ACTIONS,
   ADA,
+  authSession,
   GAME_ID,
   gameView,
   GRACE,
+  LINUS,
   NO_ACTIONS,
   TOKEN_A,
   TOKEN_B,
+  TOKEN_C,
 } from '@/test/fixtures';
 import { matchAlreadyChosen, renderPage, seatAlreadySignedIn } from '@/test/render';
 
@@ -26,9 +30,11 @@ import { matchAlreadyChosen, renderPage, seatAlreadySignedIn } from '@/test/rend
  * The board.
  *
  * Every assertion here is about rendering what the server said. The important
- * one is the disabled Roll: it is disabled because `availableActions.canRoll`
- * arrived as `false`, not because the test set up a position in which rolling
- * would be illegal — the client has no idea what those positions are.
+ * ones are the divergence tests: they build positions in which the server's
+ * answer and "is it my turn" point in *different* directions. A suite where the
+ * two always agree cannot tell a client that reads `availableActions` apart from
+ * a client that re-derives legality from `viewerSeat === activePlayer`, because
+ * both produce the same screen.
  */
 
 const GAME_PATH = ROUTES.games.byId(GAME_ID);
@@ -56,8 +62,26 @@ function controls(seat: 'A' | 'B') {
   return within(screen.getByRole('region', { name: `Seat ${seat} controls` }));
 }
 
+/**
+ * A seat's command button, by accessible name.
+ *
+ * The name carries the seat because the two panels otherwise render six buttons
+ * sharing three names, and a screen-reader rotor lists them as "Roll, Roll,
+ * Hold, Hold".
+ */
+function button(seat: 'A' | 'B', label: string): HTMLElement {
+  return controls(seat).getByRole('button', { name: `${label}, Seat ${seat}` });
+}
+
 function card(name: string) {
   return within(screen.getByRole('article', { name }));
+}
+
+/** The live region's sentence, once it has been published into the mounted region. */
+async function expectAnnounced(sentence: string): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByRole('status')).toHaveTextContent(sentence);
+  });
 }
 
 describe('rendering what the server sent', () => {
@@ -148,10 +172,10 @@ describe('button state', () => {
 
     await screen.findByRole('region', { name: 'Game 1' });
 
-    expect(controls('A').getByRole('button', { name: 'Roll' })).toBeDisabled();
-    expect(controls('A').getByRole('button', { name: 'Hold' })).toBeDisabled();
-    expect(controls('B').getByRole('button', { name: 'Roll' })).toBeEnabled();
-    expect(controls('B').getByRole('button', { name: 'Hold' })).toBeEnabled();
+    expect(button('A', 'Roll')).toBeDisabled();
+    expect(button('A', 'Hold')).toBeDisabled();
+    expect(button('B', 'Roll')).toBeEnabled();
+    expect(button('B', 'Hold')).toBeEnabled();
   });
 
   it('disables New game when the server says the seat may not start one', async () => {
@@ -164,7 +188,7 @@ describe('button state', () => {
 
     await screen.findByRole('region', { name: 'Game 1' });
 
-    expect(controls('A').getByRole('button', { name: 'New game' })).toBeDisabled();
+    expect(button('A', 'New game')).toBeDisabled();
   });
 
   it('sends the revision of the view it is showing', async () => {
@@ -175,7 +199,7 @@ describe('button state', () => {
     const { user } = renderPage();
 
     await screen.findByRole('region', { name: 'Game 1' });
-    await user.click(controls('A').getByRole('button', { name: 'Roll' }));
+    await user.click(button('A', 'Roll'));
 
     await waitFor(() => {
       expect(api.callsTo('POST', ROUTES.games.roll(GAME_ID))).toHaveLength(1);
@@ -214,7 +238,7 @@ describe('button state', () => {
     await screen.findByRole('region', { name: 'Game 1' });
     const fetchesBefore = api.callsTo('GET', GAME_PATH).length;
 
-    await user.click(controls('A').getByRole('button', { name: 'Hold' }));
+    await user.click(button('A', 'Hold'));
 
     await waitFor(() => {
       expect(api.callsTo('POST', ROUTES.games.hold(GAME_ID))).toHaveLength(1);
@@ -223,11 +247,7 @@ describe('button state', () => {
     expect(api.callsTo('POST', ROUTES.games.hold(GAME_ID))[0]?.body).toEqual({
       expectedRevision: 4,
     });
-    await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'Round score banked. It is now Grace’s turn to roll.',
-      );
-    });
+    await expectAnnounced('Round score banked. It is now Grace’s turn to roll.');
 
     // Both seats are refreshed, not just the one that acted.
     await waitFor(() => {
@@ -256,7 +276,13 @@ describe('button state', () => {
     const { user } = renderPage();
 
     await screen.findByRole('region', { name: 'Game 1' });
-    await user.click(controls('A').getByRole('button', { name: 'New game' }));
+
+    // The banner is up because `status` is COMPLETED and `winner` is a seat —
+    // not because one score is higher than the other. Both players are on 0
+    // here, so a client comparing the two would show nothing at all.
+    expect(screen.getByTestId('winner-banner')).toHaveTextContent('Ada wins game 1');
+
+    await user.click(button('A', 'New game'));
 
     await waitFor(() => {
       expect(api.callsTo('POST', ROUTES.games.newGame(GAME_ID))).toHaveLength(1);
@@ -265,15 +291,11 @@ describe('button state', () => {
     expect(api.callsTo('POST', ROUTES.games.newGame(GAME_ID))[0]?.body).toEqual({
       expectedRevision: 9,
     });
-    await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(
-        'New game started. It is Ada’s turn to roll.',
-      );
-    });
+    await expectAnnounced('New game started. It is Ada’s turn to roll.');
     expect(screen.getByRole('region', { name: 'Game 2' })).toBeInTheDocument();
   });
 
-  it('shows a pending state while a roll is in flight', async () => {
+  it('keeps the in-flight button focusable, so a keyboard user is not thrown to the top of the page', async () => {
     const api = installFakeApi();
     seatedAtBoard(api, () => gameView());
 
@@ -283,14 +305,126 @@ describe('button state', () => {
     const { user } = renderPage();
 
     await screen.findByRole('region', { name: 'Game 1' });
-    await user.click(controls('A').getByRole('button', { name: 'Roll' }));
+    await user.click(button('A', 'Roll'));
 
-    const rolling = await controls('A').findByRole('button', { name: 'Rolling…' });
-    expect(rolling).toBeDisabled();
+    // `aria-disabled`, not `disabled`: announced as unavailable, the handler
+    // drops the click, and — the point — it can still hold focus. A `disabled`
+    // element cannot, so disabling the button the player just pressed sent a
+    // keyboard user back to <body> on every single turn.
+    const rolling = await controls('A').findByRole('button', { name: 'Rolling…, Seat A' });
+    expect(rolling).toHaveAttribute('aria-disabled', 'true');
+    expect(rolling).toBeEnabled();
+    expect(document.activeElement).toBe(rolling);
+
+    await user.click(rolling);
+    expect(api.callsTo('POST', ROUTES.games.roll(GAME_ID))).toHaveLength(1);
 
     pending.resolve(ok(gameView({ revision: 2, lastDice: [3, 4], roundScore: 7 })));
 
-    expect(await controls('A').findByRole('button', { name: 'Roll' })).toBeInTheDocument();
+    expect(await controls('A').findByRole('button', { name: 'Roll, Seat A' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The divergence tests.
+ *
+ * Everywhere else in this file the fixtures satisfy `canRoll === canHold ===
+ * (viewerSeat === activePlayer)`, which makes a client that reads
+ * `availableActions` and a client that re-derives legality from two seat indices
+ * indistinguishable. These pull the two apart.
+ */
+describe('when the server’s answer and whose turn it is disagree', () => {
+  it('keeps Roll and Hold off for the seat whose turn it still is, in a finished game', async () => {
+    const api = installFakeApi();
+    seatedAtBoard(api, (token) =>
+      gameView({
+        players: [
+          { userId: ADA.id, displayName: ADA.displayName, globalScore: 84, winCount: 0 },
+          { userId: GRACE.id, displayName: GRACE.displayName, globalScore: 104, winCount: 3 },
+        ],
+        activePlayer: 1,
+        status: 'COMPLETED',
+        winner: 1,
+        effect: 'GAME_WON',
+        viewerSeat: token === TOKEN_A ? 0 : 1,
+        availableActions: { canRoll: false, canHold: false, canStartNewGame: true },
+      }),
+    );
+
+    renderPage();
+
+    await screen.findByRole('region', { name: 'Game 1' });
+
+    // By every local measure Seat B holds the dice — `viewerSeat` and
+    // `activePlayer` are both 1 — and both of its controls are still off,
+    // because that is what `availableActions` said.
+    expect(controls('B').getByText('Your turn.')).toBeInTheDocument();
+    expect(button('B', 'Roll')).toBeDisabled();
+    expect(button('B', 'Hold')).toBeDisabled();
+    expect(button('B', 'New game')).toBeEnabled();
+  });
+
+  it('enables Roll and disables Hold for one and the same seat', async () => {
+    const api = installFakeApi();
+    seatedAtBoard(api, (token) =>
+      gameView({
+        activePlayer: 1,
+        viewerSeat: token === TOKEN_A ? 0 : 1,
+        availableActions:
+          token === TOKEN_B
+            ? { canRoll: true, canHold: false, canStartNewGame: false }
+            : NO_ACTIONS,
+      }),
+    );
+
+    renderPage();
+
+    await screen.findByRole('region', { name: 'Game 1' });
+
+    // One seat, one turn, two different answers. No local rule can produce this
+    // pair; only reading the two booleans can.
+    expect(controls('B').getByText('Your turn.')).toBeInTheDocument();
+    expect(button('B', 'Roll')).toBeEnabled();
+    expect(button('B', 'Hold')).toBeDisabled();
+  });
+
+  it('enables New game in a game that has not finished, because canStartNewGame said so', async () => {
+    const api = installFakeApi();
+    seatedAtBoard(api, () =>
+      gameView({
+        status: 'ACTIVE',
+        winner: null,
+        availableActions: { canRoll: true, canHold: true, canStartNewGame: true },
+      }),
+    );
+
+    renderPage();
+
+    await screen.findByRole('region', { name: 'Game 1' });
+
+    expect(screen.queryByTestId('winner-banner')).not.toBeInTheDocument();
+    expect(button('A', 'New game')).toBeEnabled();
+  });
+
+  it('renders the spectator branch for a seat the server gave no chair', async () => {
+    const api = installFakeApi();
+    seatedAtBoard(api, (token) =>
+      gameView({
+        viewerSeat: token === TOKEN_A ? 0 : null,
+        availableActions: token === TOKEN_A ? ACTIVE_ACTIONS : NO_ACTIONS,
+      }),
+    );
+
+    renderPage();
+
+    await screen.findByRole('region', { name: 'Game 1' });
+
+    expect(
+      controls('B').getByText('Watching — this seat is not seated in this match.'),
+    ).toBeInTheDocument();
+    expect(controls('B').queryByText('Your turn.')).not.toBeInTheDocument();
+    expect(controls('B').queryByText(/^Waiting for/)).not.toBeInTheDocument();
+    expect(button('B', 'Roll')).toBeDisabled();
   });
 });
 
@@ -329,7 +463,7 @@ describe('the double-six moment', () => {
     const { user } = renderPage();
 
     await screen.findByRole('region', { name: 'Game 1' });
-    await user.click(controls('A').getByRole('button', { name: 'Roll' }));
+    await user.click(button('A', 'Roll'));
 
     const callout = await screen.findByTestId('double-six-callout');
     expect(callout).toHaveTextContent('the round score was lost');
@@ -337,21 +471,27 @@ describe('the double-six moment', () => {
     expect(screen.getByTestId('round-score')).toHaveTextContent('0');
 
     // The live region tells a screen-reader user the same thing.
-    expect(screen.getByRole('status')).toHaveTextContent(
-      'Double six. The round score is lost and the dice pass to Grace.',
-    );
+    await expectAnnounced('Double six. The round score is lost and the dice pass to Grace.');
+
+    // Seat A's Roll is correctly disabled now — the turn passed — so the button
+    // the keyboard user was standing on is no longer a place to stand. Focus
+    // moves to that seat's own panel, rather than being left on a dead control
+    // or dropped to <body>, which is the top of the document.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Seat A controls' }));
+    });
 
     // Seat B is the active player now and the server says it may roll — but the
     // animation pause holds its controls for a moment. That pause is the one
     // client-side gate in the app, and it is a timer, not a rule.
     await waitFor(() => {
-      expect(controls('B').getByRole('button', { name: 'Roll' })).toBeDisabled();
+      expect(button('B', 'Roll')).toBeDisabled();
     });
 
     // …and it releases on its own.
     await waitFor(
       () => {
-        expect(controls('B').getByRole('button', { name: 'Roll' })).toBeEnabled();
+        expect(button('B', 'Roll')).toBeEnabled();
       },
       { timeout: 5000 },
     );
@@ -380,9 +520,170 @@ describe('the end of a game', () => {
 
     expect(await screen.findByTestId('winner-banner')).toHaveTextContent('Grace wins game 1');
     expect(card('Grace, Second chair').getByText('Winner')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Grace wins game 1.');
-    expect(controls('A').getByRole('button', { name: 'Roll' })).toBeDisabled();
-    expect(controls('A').getByRole('button', { name: 'New game' })).toBeEnabled();
+    await expectAnnounced('Grace wins game 1.');
+    expect(button('A', 'Roll')).toBeDisabled();
+    expect(button('A', 'New game')).toBeEnabled();
+  });
+
+  it('names the winner the server sent, not the player with the higher score', async () => {
+    const api = installFakeApi();
+    // Deliberately adversarial: `winner` is the *first* chair while the second
+    // chair holds the larger `globalScore`. A client reading `winner` says Ada;
+    // a client comparing the two scores says Grace.
+    seatedAtBoard(api, (token) =>
+      gameView({
+        players: [
+          { userId: ADA.id, displayName: ADA.displayName, globalScore: 42, winCount: 1 },
+          { userId: GRACE.id, displayName: GRACE.displayName, globalScore: 91, winCount: 0 },
+        ],
+        activePlayer: 0,
+        status: 'COMPLETED',
+        winner: 0,
+        effect: 'GAME_WON',
+        viewerSeat: token === TOKEN_A ? 0 : 1,
+        availableActions: { canRoll: false, canHold: false, canStartNewGame: true },
+      }),
+    );
+
+    renderPage();
+
+    expect(await screen.findByTestId('winner-banner')).toHaveTextContent('Ada wins game 1');
+    expect(screen.getByTestId('winner-banner')).not.toHaveTextContent('Grace');
+    await expectAnnounced('Ada wins game 1.');
+
+    expect(card('Ada, First chair').getByText('Winner')).toBeInTheDocument();
+    expect(card('Grace, Second chair').queryByText('Winner')).not.toBeInTheDocument();
+
+    // Ada is still `activePlayer` — a finished game does not rewind the turn —
+    // and her card says Winner without also saying "Their turn". The game is
+    // over, so there is no turn to be having.
+    expect(card('Ada, First chair').queryByText('Their turn')).not.toBeInTheDocument();
+    expect(card('Grace, Second chair').queryByText('Their turn')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * A seat is a slot on this page, not an identity.
+ *
+ * Both of these fail against a cache keyed by seat alone, because a seat's
+ * entries outlive the token that filled them: `enabled: false` stops the
+ * refetching, not the reading.
+ */
+describe('when a seat changes hands', () => {
+  function boardWhereSeatAMayRoll(token: string | null): GameView {
+    return gameView({
+      viewerSeat: token === TOKEN_A ? 0 : 1,
+      availableActions: token === TOKEN_A ? ACTIVE_ACTIONS : NO_ACTIONS,
+    });
+  }
+
+  it('takes the departing player’s board away with them when they sign out', async () => {
+    const api = installFakeApi();
+    seatedAtBoard(api, boardWhereSeatAMayRoll);
+    api.route('POST', ROUTES.auth.logout, () => noContent());
+
+    const { user } = renderPage();
+
+    await screen.findByRole('region', { name: 'Game 1' });
+    expect(button('A', 'Roll')).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Sign out, Seat A' }));
+
+    expect(
+      await controls('A').findByText(
+        'This seat is signed out. Sign in above to take these controls.',
+      ),
+    ).toBeInTheDocument();
+
+    // Not "disabled" — gone. A signed-out seat has no view to render buttons
+    // from, however recently it had one.
+    expect(controls('A').queryByRole('button', { name: 'Roll, Seat A' })).not.toBeInTheDocument();
+    expect(controls('A').queryByRole('button', { name: 'Hold, Seat A' })).not.toBeInTheDocument();
+
+    // Seat B is untouched.
+    expect(button('B', 'Roll')).toBeInTheDocument();
+  });
+
+  it('never shows a new occupant the previous one’s buttons', async () => {
+    const api = installFakeApi();
+
+    const byToken: Readonly<Record<string, UserSummary>> = {
+      [TOKEN_A]: ADA,
+      [TOKEN_B]: GRACE,
+      [TOKEN_C]: LINUS,
+    };
+
+    api.route('GET', ROUTES.auth.me, (request) => {
+      const user = request.token === null ? undefined : byToken[request.token];
+
+      return user === undefined
+        ? fail('UNAUTHENTICATED')
+        : ok({ ...user, email: `${user.displayName.toLowerCase()}@example.com` });
+    });
+
+    // Linus's board is held open, so the window between "signed in at Seat A"
+    // and "his own answer arrived" is the whole test.
+    const linusBoard = deferred<FakeResponse>();
+
+    api.route('GET', GAME_PATH, (request) =>
+      request.token === TOKEN_C ? linusBoard.promise : ok(boardWhereSeatAMayRoll(request.token)),
+    );
+
+    api.route('POST', ROUTES.auth.logout, () => noContent());
+    api.route('POST', ROUTES.auth.login, () => ok(authSession(LINUS, TOKEN_C)));
+
+    seatAlreadySignedIn('A', ADA, TOKEN_A);
+    seatAlreadySignedIn('B', GRACE, TOKEN_B);
+    matchAlreadyChosen(GAME_ID);
+
+    const { user } = renderPage();
+
+    await screen.findByRole('region', { name: 'Game 1' });
+    expect(button('A', 'Roll')).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Sign out, Seat A' }));
+
+    const panel = within(await screen.findByRole('region', { name: 'Seat A' }));
+    await user.type(panel.getByLabelText('Email'), 'linus@example.com');
+    await user.type(panel.getByLabelText('Password'), 'correct-horse-battery');
+    await user.click(panel.getByRole('button', { name: 'Sign in as Seat A' }));
+
+    expect(await panel.findByText('Linus')).toBeInTheDocument();
+
+    // Linus is signed in and his own view has not arrived. What he must not be
+    // shown in the meantime is Ada's.
+    expect(await controls('A').findByText('Loading this seat’s view…')).toBeInTheDocument();
+    expect(controls('A').queryByRole('button', { name: 'Roll, Seat A' })).not.toBeInTheDocument();
+    expect(controls('A').queryByText('Your turn.')).not.toBeInTheDocument();
+
+    // And when it does arrive it is his: the server seated him nowhere.
+    linusBoard.resolve(ok(gameView({ viewerSeat: null, availableActions: NO_ACTIONS })));
+
+    expect(
+      await controls('A').findByText('Watching — this seat is not seated in this match.'),
+    ).toBeInTheDocument();
+    expect(button('A', 'Roll')).toBeDisabled();
+  });
+});
+
+describe('when neither seat can load the board', () => {
+  it('says so instead of spinning for ever', async () => {
+    const api = installFakeApi();
+
+    // The stored game id outlives the tokens, so a plain refresh after the TTL
+    // returns to a board with nothing to fetch it with. A query with
+    // `enabled: false` is *permanently* `status: 'pending'`, so a spinner gated
+    // on `isPending` would never stop.
+    api.route('GET', ROUTES.auth.me, () => fail('UNAUTHENTICATED'));
+    matchAlreadyChosen(GAME_ID);
+
+    renderPage();
+
+    expect(
+      await screen.findByText(/Both seats are signed out, so there is no token/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Loading the board…')).not.toBeInTheDocument();
+    expect(api.callsTo('GET', GAME_PATH)).toHaveLength(0);
   });
 });
 
@@ -405,7 +706,7 @@ describe('when a seat’s view is stale', () => {
     await screen.findByRole('region', { name: 'Game 1' });
     const before = api.callsTo('GET', GAME_PATH).length;
 
-    await user.click(controls('A').getByRole('button', { name: 'Roll' }));
+    await user.click(button('A', 'Roll'));
 
     // The board catches up…
     await waitFor(() => {
@@ -425,7 +726,7 @@ describe('when a seat’s view is stale', () => {
     const { user } = renderPage();
 
     await screen.findByRole('region', { name: 'Game 1' });
-    await user.click(controls('A').getByRole('button', { name: 'Roll' }));
+    await user.click(button('A', 'Roll'));
 
     const alert = await controls('A').findByRole('alert');
     expect(alert).toHaveTextContent('Something went wrong on the server.');
@@ -446,6 +747,6 @@ describe('when a seat’s view is stale', () => {
     expect(
       await controls('B').findByText('This seat is not one of the two players in this match.'),
     ).toBeInTheDocument();
-    expect(controls('A').getByRole('button', { name: 'Roll' })).toBeEnabled();
+    expect(button('A', 'Roll')).toBeEnabled();
   });
 });

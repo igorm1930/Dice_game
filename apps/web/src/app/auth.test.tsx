@@ -2,7 +2,7 @@ import { ROUTES, type UserSummary } from '@dice-game/contracts';
 import { screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { fail, type FakeApi, installFakeApi, ok } from '@/test/fake-api';
+import { fail, type FakeApi, installFakeApi, noContent, ok } from '@/test/fake-api';
 import { ADA, authSession, GRACE, TOKEN_A, TOKEN_B } from '@/test/fixtures';
 import { renderPage, seatAlreadySignedIn } from '@/test/render';
 
@@ -166,6 +166,67 @@ describe('signing in at each seat', () => {
 
     expect(await panel.findByText(/invalid email/i)).toBeInTheDocument();
     expect(api.callsTo('POST', ROUTES.auth.login)).toHaveLength(0);
+  });
+});
+
+describe('signing out of one seat', () => {
+  it('revokes that seat’s own token, and leaves the other seat alone', async () => {
+    const api = installFakeApi();
+    serveMe(api, { [TOKEN_A]: ADA, [TOKEN_B]: GRACE });
+    serveUsers(api);
+    api.route('POST', ROUTES.auth.logout, () => noContent());
+
+    seatAlreadySignedIn('A', ADA, TOKEN_A);
+    seatAlreadySignedIn('B', GRACE, TOKEN_B);
+
+    const { user } = renderPage();
+
+    await seatPanel('A').findByText('Ada');
+    await seatPanel('B').findByText('Grace');
+
+    await user.click(seatPanel('A').getByRole('button', { name: 'Sign out, Seat A' }));
+
+    // The request carries *that seat's* token. There is no ambient current user
+    // on this page, so a logout that sent "the" token would sign the wrong
+    // person out — and logout is real revocation, not a cookie being dropped.
+    await waitFor(() => {
+      expect(api.callsTo('POST', ROUTES.auth.logout)).toHaveLength(1);
+    });
+    expect(api.callsTo('POST', ROUTES.auth.logout)[0]?.token).toBe(TOKEN_A);
+
+    expect(
+      await seatPanel('A').findByRole('button', { name: 'Sign in as Seat A' }),
+    ).toBeInTheDocument();
+    expect(window.sessionStorage.getItem('dice-game:v1:seat:A')).toBeNull();
+
+    // Seat B never noticed.
+    expect(seatPanel('B').getByText('Grace')).toBeInTheDocument();
+    expect(window.sessionStorage.getItem('dice-game:v1:seat:B')).not.toBeNull();
+  });
+
+  it('sends exactly one logout request under StrictMode', async () => {
+    const api = installFakeApi();
+    serveMe(api, { [TOKEN_A]: ADA, [TOKEN_B]: GRACE });
+    serveUsers(api);
+    api.route('POST', ROUTES.auth.logout, () => noContent());
+
+    seatAlreadySignedIn('A', ADA, TOKEN_A);
+    seatAlreadySignedIn('B', GRACE, TOKEN_B);
+
+    // StrictMode double-invokes the functions passed to `setState`. Reading the
+    // token from inside one of those updaters — rather than from the closure —
+    // therefore turns one deliberate sign-out into two logout requests, and this
+    // is the only way to see it.
+    const { user } = renderPage({ strict: true });
+
+    await seatPanel('A').findByText('Ada');
+    await user.click(seatPanel('A').getByRole('button', { name: 'Sign out, Seat A' }));
+
+    await waitFor(() => {
+      expect(seatPanel('A').getByRole('button', { name: 'Sign in as Seat A' })).toBeInTheDocument();
+    });
+
+    expect(api.callsTo('POST', ROUTES.auth.logout)).toHaveLength(1);
   });
 });
 

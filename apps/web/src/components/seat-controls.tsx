@@ -1,10 +1,10 @@
 'use client';
 
 import { type GameView } from '@dice-game/contracts';
-import { useEffect } from 'react';
+import { type RefObject, useEffect, useRef } from 'react';
 
 import { useSeat, useSeatSessions } from '@/hooks/seat-sessions';
-import { useGameCommand, useGameQuery } from '@/hooks/use-game';
+import { type GameCommand, useGameCommand, useGameQuery } from '@/hooks/use-game';
 import { ApiError } from '@/lib/api-client';
 import { SEAT_LABELS, type SeatId } from '@/lib/seats';
 
@@ -25,6 +25,10 @@ import { LoadingBlock, Spinner } from './ui/spinner';
  * The one extra condition on Roll and Hold is `paused`, the double-six
  * animation, which is a local timer and is documented as such in
  * `use-double-six-pause.ts`.
+ *
+ * The view is read only while this seat is *signed in*. A cache entry outlives
+ * the `enabled: false` that signing out produces, so without that gate a
+ * signed-out panel carries on rendering the departed player's buttons.
  */
 export function SeatControls({
   seat,
@@ -43,8 +47,17 @@ export function SeatControls({
 
   useExpireOnUnauthenticated(seat, query.error);
 
+  const signedIn = seatState.status === 'signed-in';
+  const view = signedIn ? query.data : undefined;
+
+  const sectionRef = useRef<HTMLElement>(null);
+  const acting = roll.isPending || hold.isPending || newGame.isPending;
+  const rememberAction = useReturnFocusAfterActing(sectionRef, acting);
+
   return (
     <section
+      ref={sectionRef}
+      tabIndex={-1}
       aria-label={`${SEAT_LABELS[seat]} controls`}
       className="flex flex-col gap-3 rounded-2xl border border-line bg-surface/70 p-4"
     >
@@ -57,21 +70,20 @@ export function SeatControls({
         )}
       </header>
 
-      {seatState.status !== 'signed-in' && (
+      {!signedIn && (
         <p className="text-sm text-subtle">
           This seat is signed out. Sign in above to take these controls.
         </p>
       )}
 
-      {seatState.status === 'signed-in' && query.isPending && (
-        <LoadingBlock label="Loading this seat’s view…" />
-      )}
+      {signedIn && query.isPending && <LoadingBlock label="Loading this seat’s view…" />}
 
-      {query.error !== null && (
+      {signedIn && query.error !== null && (
         <div className="flex flex-col gap-2">
           <ErrorAlert error={query.error} />
           <Button
             variant="secondary"
+            aria-label={`Try again, ${SEAT_LABELS[seat]}`}
             onClick={() => {
               void query.refetch();
             }}
@@ -81,42 +93,45 @@ export function SeatControls({
         </div>
       )}
 
-      {query.data !== undefined && (
+      {view !== undefined && (
         <>
-          <TurnHint view={query.data} />
+          <TurnHint view={view} />
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={!query.data.availableActions.canRoll || paused || roll.isPending}
-              onClick={() => {
-                roll.run(query.data.revision);
-              }}
-            >
-              {roll.isPending && <Spinner />}
-              {roll.isPending ? 'Rolling…' : 'Roll'}
-            </Button>
+            <CommandButton
+              seat={seat}
+              command={roll}
+              revision={view.revision}
+              allowed={view.availableActions.canRoll}
+              blocked={paused}
+              idle="Roll"
+              busy="Rolling…"
+              onAct={rememberAction}
+            />
 
-            <Button
+            <CommandButton
               variant="secondary"
-              disabled={!query.data.availableActions.canHold || paused || hold.isPending}
-              onClick={() => {
-                hold.run(query.data.revision);
-              }}
-            >
-              {hold.isPending && <Spinner />}
-              {hold.isPending ? 'Holding…' : 'Hold'}
-            </Button>
+              seat={seat}
+              command={hold}
+              revision={view.revision}
+              allowed={view.availableActions.canHold}
+              blocked={paused}
+              idle="Hold"
+              busy="Holding…"
+              onAct={rememberAction}
+            />
 
-            <Button
+            <CommandButton
               variant="secondary"
-              disabled={!query.data.availableActions.canStartNewGame || newGame.isPending}
-              onClick={() => {
-                newGame.run(query.data.revision);
-              }}
-            >
-              {newGame.isPending && <Spinner />}
-              {newGame.isPending ? 'Starting…' : 'New game'}
-            </Button>
+              seat={seat}
+              command={newGame}
+              revision={view.revision}
+              allowed={view.availableActions.canStartNewGame}
+              blocked={false}
+              idle="New game"
+              busy="Starting…"
+              onAct={rememberAction}
+            />
           </div>
 
           {roll.error !== null && <ErrorAlert error={roll.error} />}
@@ -126,6 +141,120 @@ export function SeatControls({
       )}
     </section>
   );
+}
+
+/**
+ * One command button.
+ *
+ * Two kinds of "unavailable" meet here, and they are not the same thing:
+ *
+ *  - `allowed` is the server's answer and `blocked` is the double-six timer.
+ *    Both are a real `disabled` attribute, so assistive technology announces the
+ *    control as unavailable rather than the player discovering that nothing
+ *    happens.
+ *  - "a request is in flight" is `aria-disabled` instead. A `disabled` element
+ *    cannot hold focus, so disabling the button the player had just pressed threw
+ *    a keyboard user back to the top of the document on every turn. It stays
+ *    focusable, still announces itself as unavailable, and the handler drops the
+ *    click.
+ */
+function CommandButton({
+  seat,
+  command,
+  revision,
+  allowed,
+  blocked,
+  idle,
+  busy,
+  variant = 'primary',
+  onAct,
+}: {
+  seat: SeatId;
+  command: GameCommand;
+  revision: number;
+  allowed: boolean;
+  blocked: boolean;
+  idle: string;
+  busy: string;
+  variant?: 'primary' | 'secondary';
+  onAct: () => void;
+}): React.JSX.Element {
+  const label = command.isPending ? busy : idle;
+
+  return (
+    <Button
+      variant={variant}
+      disabled={!allowed || blocked}
+      aria-disabled={command.isPending}
+      // Six buttons across the two seats otherwise share three accessible names.
+      // A section's `aria-label` does not contribute to the accessible name of a
+      // button inside it, so a screen-reader rotor would list "Roll, Roll, Hold,
+      // Hold". Each one says which seat it belongs to; the visible word stays
+      // first, so the accessible name still contains the visible label.
+      aria-label={`${label}, ${SEAT_LABELS[seat]}`}
+      className={command.isPending ? 'cursor-not-allowed opacity-45' : undefined}
+      onClick={() => {
+        if (command.isPending) {
+          return;
+        }
+
+        onAct();
+        command.run(revision);
+      }}
+    >
+      {command.isPending && <Spinner />}
+      {label}
+    </Button>
+  );
+}
+
+/**
+ * Puts focus back in this panel when the control that was just pressed becomes
+ * genuinely unavailable.
+ *
+ * Rolling a double six, or holding, hands the turn to the other player, so the
+ * button the keyboard user was standing on is correctly disabled — and a
+ * disabled element is not focusable, so a browser drops focus to `<body>`,
+ * which is the top of the document.
+ *
+ * Both endings are handled, because they are not the same ending everywhere: a
+ * browser blurs the element it has just disabled, and jsdom leaves focus sitting
+ * on it. Either way the keyboard user is stranded, and either way focus comes
+ * back to this panel. Only the seat that acted moves, and only when focus really
+ * did land somewhere useless.
+ */
+function useReturnFocusAfterActing(
+  sectionRef: RefObject<HTMLElement | null>,
+  acting: boolean,
+): () => void {
+  const pending = useRef(false);
+
+  useEffect(() => {
+    if (!pending.current || acting) {
+      return;
+    }
+
+    pending.current = false;
+
+    const active = document.activeElement;
+    const section = sectionRef.current;
+
+    if (section === null) {
+      return;
+    }
+
+    const droppedToTheTop = active === null || active === document.body;
+    const strandedOnADisabledControl =
+      active instanceof HTMLButtonElement && active.disabled && section.contains(active);
+
+    if (droppedToTheTop || strandedOnADisabledControl) {
+      section.focus();
+    }
+  });
+
+  return () => {
+    pending.current = true;
+  };
 }
 
 /**

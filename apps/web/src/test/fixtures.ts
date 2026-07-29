@@ -27,6 +27,8 @@ export const LINUS: UserSummary = { id: 'cccccccccccccccccccccccc', displayName:
 
 export const TOKEN_A = 'token-for-seat-a';
 export const TOKEN_B = 'token-for-seat-b';
+/** A third token, for the case where a seat changes hands mid-session. */
+export const TOKEN_C = 'token-for-a-second-occupant';
 
 export const NO_ACTIONS: AvailableActions = {
   canRoll: false,

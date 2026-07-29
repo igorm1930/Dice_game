@@ -72,8 +72,12 @@ export function CreateGamePanel({
     },
     onSuccess: (view) => {
       // The response is already this seat's view of the new game; seeding it
-      // means the board renders without a second round trip.
-      queryClient.setQueryData(queryKeys.game(view.id, CREATOR_SEAT), view);
+      // means the board renders without a second round trip. The key carries the
+      // creator's own id, so the entry belongs to the identity that fetched it.
+      if (creatorId !== null) {
+        queryClient.setQueryData(queryKeys.game(view.id, CREATOR_SEAT, creatorId), view);
+      }
+
       onCreated(view.id);
     },
   });
@@ -100,6 +104,17 @@ export function CreateGamePanel({
   }
 
   const options = (users.data?.items ?? []).filter((user) => user.id !== creatorId);
+
+  /**
+   * The first-run dead end.
+   *
+   * With one account registered the picker holds nothing but its placeholder,
+   * and the hint about needing two accounts used to appear only while Seat B was
+   * *signed out* — which is to say it vanished at exactly the moment somebody
+   * would have needed it. An empty list is not a form to be submitted; it is a
+   * thing to be told about.
+   */
+  const noOpponents = users.data !== undefined && options.length === 0;
 
   return (
     <section
@@ -148,30 +163,48 @@ export function CreateGamePanel({
           noValidate
         >
           <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="opponent"
-              className="text-xs font-semibold uppercase tracking-wider text-subtle"
-            >
-              Opponent
-            </label>
-            <select
-              id="opponent"
-              aria-invalid={errors.opponentId != null}
-              aria-describedby={errors.opponentId != null ? 'opponent-error' : undefined}
-              className="w-full rounded-lg border border-line bg-canvas/70 px-3 py-2.5 text-sm text-ink transition hover:border-accent/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-focus"
-              {...register('opponentId')}
-            >
-              <option value="">Choose a player…</option>
-              {options.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.displayName}
-                </option>
-              ))}
-            </select>
-            {errors.opponentId != null && (
-              <p id="opponent-error" role="alert" className="text-xs font-medium text-danger">
-                Choose an opponent to play against.
-              </p>
+            {noOpponents ? (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-wider text-subtle">
+                  Opponent
+                </p>
+                <p
+                  id="no-opponents"
+                  className="rounded-lg border border-line bg-raised/50 px-3 py-2 text-sm text-subtle"
+                >
+                  There is no one to play against yet — yours is the only account on this server.
+                  Both seats need their own account, so create a second one at {SEAT_LABELS.B}{' '}
+                  above, then come back and start the match.
+                </p>
+              </>
+            ) : (
+              <>
+                <label
+                  htmlFor="opponent"
+                  className="text-xs font-semibold uppercase tracking-wider text-subtle"
+                >
+                  Opponent
+                </label>
+                <select
+                  id="opponent"
+                  aria-invalid={errors.opponentId != null}
+                  aria-describedby={errors.opponentId != null ? 'opponent-error' : undefined}
+                  className="w-full rounded-lg border border-line bg-canvas/70 px-3 py-2.5 text-sm text-ink transition hover:border-accent/60 focus-visible:outline-[3px] focus-visible:outline-offset-2 focus-visible:outline-focus"
+                  {...register('opponentId')}
+                >
+                  <option value="">Choose a player…</option>
+                  {options.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.displayName}
+                    </option>
+                  ))}
+                </select>
+                {errors.opponentId != null && (
+                  <p id="opponent-error" role="alert" className="text-xs font-medium text-danger">
+                    Choose an opponent to play against.
+                  </p>
+                )}
+              </>
             )}
           </div>
 
@@ -190,7 +223,11 @@ export function CreateGamePanel({
 
           {mutation.error !== null && <ErrorAlert error={mutation.error} />}
 
-          <Button type="submit" disabled={mutation.isPending}>
+          <Button
+            type="submit"
+            disabled={mutation.isPending || noOpponents}
+            aria-describedby={noOpponents ? 'no-opponents' : undefined}
+          >
             {mutation.isPending && <Spinner />}
             {mutation.isPending ? 'Starting…' : 'Start match'}
           </Button>

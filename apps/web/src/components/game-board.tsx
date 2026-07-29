@@ -1,7 +1,9 @@
 'use client';
 
 import { type GameView, type Seat } from '@dice-game/contracts';
+import { useEffect, useState } from 'react';
 
+import { useSeatSessions } from '@/hooks/seat-sessions';
 import { useDoubleSixPause } from '@/hooks/use-double-six-pause';
 import { useGameQuery } from '@/hooks/use-game';
 import { cx } from '@/lib/cx';
@@ -37,6 +39,7 @@ export function GameBoard({
 }): React.JSX.Element {
   const seatA = useGameQuery(gameId, 'A');
   const seatB = useGameQuery(gameId, 'B');
+  const { seats } = useSeatSessions();
 
   const views: Readonly<Record<SeatId, GameView | undefined>> = {
     A: seatA.data,
@@ -45,6 +48,23 @@ export function GameBoard({
 
   const view = views.A ?? views.B;
   const paused = useDoubleSixPause(view);
+  const announcement = useAnnouncement(narrate(view) ?? '', view?.revision ?? null);
+
+  /**
+   * Why `fetchStatus` and not `isPending`.
+   *
+   * A TanStack query with `enabled: false` is *permanently* `status: 'pending'`
+   * — it has no data and it is not going to get any. Gating the spinner on
+   * `isPending` therefore spins forever the moment neither seat holds a token,
+   * which is reachable on a plain refresh: the stored game id outlives the two
+   * tokens, so once they have expired the page comes back to a board with
+   * nothing to fetch it with. `fetchStatus === 'fetching'` is the honest
+   * question — is a request actually in the air — and the signed-out case gets
+   * a branch of its own that says what to do about it.
+   */
+  const fetching = seatA.fetchStatus === 'fetching' || seatB.fetchStatus === 'fetching';
+  const restoring = seats.A.status === 'restoring' || seats.B.status === 'restoring';
+  const anySeatSignedIn = seats.A.status === 'signed-in' || seats.B.status === 'signed-in';
 
   return (
     <section
@@ -75,6 +95,10 @@ export function GameBoard({
        * A polite live region, so a screen-reader user is told about a bust
        * rather than having to go looking for the dice. The sentence is built
        * from `effect`, `activePlayer` and `winner` — see effect-messages.ts.
+       *
+       * The element is always here and it always starts empty; the sentence is
+       * written into it afterwards, by `useAnnouncement`. See that hook for why
+       * both halves of that matter.
        * ------------------------------------------------------------------ */}
       <p
         role="status"
@@ -82,14 +106,19 @@ export function GameBoard({
         aria-atomic="true"
         className="min-h-6 text-sm font-medium text-ink"
       >
-        {narrate(view) ?? ''}
+        {announcement}
       </p>
 
-      {view === undefined && (seatA.isPending || seatB.isPending) && (
-        <LoadingBlock label="Loading the board…" />
+      {view === undefined && (restoring || fetching) && <LoadingBlock label="Loading the board…" />}
+
+      {view === undefined && !restoring && !fetching && !anySeatSignedIn && (
+        <Alert tone="info">
+          Both seats are signed out, so there is no token to load this match with. Sign in above to
+          bring the board back, or leave the match to start a new one.
+        </Alert>
       )}
 
-      {view === undefined && !seatA.isPending && !seatB.isPending && (
+      {view === undefined && !restoring && !fetching && anySeatSignedIn && (
         <Alert tone="error">
           Neither seat could load this match. The details are on each seat’s controls below.
         </Alert>
@@ -102,7 +131,10 @@ export function GameBoard({
               className="rounded-2xl border border-gold/60 bg-gold/10 px-4 py-3 text-center text-lg font-black text-gold"
               data-testid="winner-banner"
             >
-              🏆 {view.players[view.winner].displayName} wins game {view.gameNumber}
+              {/* Decoration. Announced, it is "trophy" in the middle of a
+                  sentence that already says who won. */}
+              <span aria-hidden="true">🏆 </span>
+              {view.players[view.winner].displayName} wins game {view.gameNumber}
             </p>
           )}
 
@@ -161,6 +193,44 @@ export function GameBoard({
       )}
     </section>
   );
+}
+
+/**
+ * The narration, as the live region actually publishes it.
+ *
+ * Two separate defects live here, and both are about *when* the DOM changes
+ * rather than about what it says.
+ *
+ *  1. A live region that mounts with its first sentence already inside it is
+ *     silent. Screen readers announce mutations to a region that was already in
+ *     the accessibility tree; content that arrived with the region is just
+ *     content. So the region renders empty and the sentence is written a tick
+ *     later, on every mount — which means the first message of every match is
+ *     announced rather than only the second.
+ *
+ *  2. Two identical consecutive sentences are silent for the same reason. Only
+ *     `email` is unique, so two players may share a display name, and two
+ *     `HELD` sentences in a row are then byte-identical: React writes the same
+ *     string, the DOM does not change, and nothing is announced. Clearing first
+ *     makes the second one a real mutation, and `revision` is what tells the two
+ *     apart — the same key `use-double-six-pause.ts` uses one file over.
+ */
+function useAnnouncement(sentence: string, revision: number | null): string {
+  const [announced, setAnnounced] = useState('');
+
+  useEffect(() => {
+    setAnnounced('');
+
+    const timer = setTimeout(() => {
+      setAnnounced(sentence);
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [revision, sentence]);
+
+  return announced;
 }
 
 /** A player card, plus which local seat — if either — is sitting in that chair. */

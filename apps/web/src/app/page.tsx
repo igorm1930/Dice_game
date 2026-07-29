@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CreateGamePanel } from '@/components/create-game-panel';
 import { GameBoard } from '@/components/game-board';
 import { SeatAuthPanel } from '@/components/seat-auth-panel';
+import { useFocusOnChange } from '@/hooks/use-focus-on-change';
 import { SEAT_IDS } from '@/lib/seats';
 import { readActiveGameId, writeActiveGameId } from '@/lib/session-storage';
 
@@ -27,6 +28,14 @@ export default function HomePage(): React.JSX.Element {
     setGameId(readActiveGameId());
   }, []);
 
+  // `<main>` is the skip link's target and the landing place for a keyboard
+  // user after the branch below it is swapped out from under them, so it has to
+  // be programmatically focusable. It is `tabIndex={-1}`, not `0`: a target, not
+  // a tab stop.
+  const matchRef = useRef<HTMLElement>(null);
+
+  useFocusOnChange(gameId === null ? 'lobby' : 'board', matchRef);
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-8 sm:px-6 lg:py-12">
       <header className="flex flex-col gap-2">
@@ -44,7 +53,7 @@ export default function HomePage(): React.JSX.Element {
         ))}
       </div>
 
-      <main id="match" className="flex flex-col gap-6">
+      <main id="match" ref={matchRef} tabIndex={-1} className="flex flex-col gap-6">
         {gameId === null ? (
           <CreateGamePanel
             onCreated={(id) => {
