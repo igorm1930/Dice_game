@@ -219,11 +219,15 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
 
     steps:
       - uses: actions/checkout@v4
+      # `continue-on-error` on the step rather than the job: at job level the
+      # workflow stops failing but the check itself still reports red, which is
+      # the thing worth avoiding — a permanently red check trains a reader to
+      # ignore the column.
       - uses: actions/dependency-review-action@v4
+        continue-on-error: true
         with:
           fail-on-severity: high
 

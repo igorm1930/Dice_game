@@ -5,8 +5,9 @@ Two paths, and they are not equivalent.
 **Self-hosted on one box is the supported one** — `compose.prod.yaml` runs
 MongoDB, the API, the client and Caddy on a single host, with automatic HTTPS
 and nothing but Caddy holding a public port. It is one command and needs no
-managed services. The web image has been built and run and serves the page; the
-API image has not — see "What is actually verified".
+managed services. Both images build: the web image has been built and run here
+and serves the page, and the API image builds end to end in CI. Neither has been
+run on a real host — see "What is actually verified".
 
 **Fly + Vercel + Atlas** is configuration that was written earlier and validated
 as far as it can be without accounts. Nothing has ever been deployed to it. It
@@ -197,7 +198,7 @@ intent is stated rather than enforced by accident.
 | `.env.production` cannot be committed                    | checked by creating one and watching git ignore it  |
 | API runs against real MongoDB                            | 64 integration tests                                |
 | **Web image builds end to end**                          | **verified** — built, run, serves the page with CSS |
-| API image builds end to end                              | **unverified** — blocked here, see below            |
+| **API image builds end to end**                          | **verified in CI** — and the image runs as `node`   |
 | Self-hosted stack running                                | **not run** — needs a host                          |
 | Fly / Vercel / Atlas deploy                              | **blocked**: no credentials                         |
 | Live URLs                                                | **none exist**                                      |
@@ -208,10 +209,8 @@ the page, and the stylesheet returns 200 with content — which is the check wor
 naming, because `output: 'standalone'` excludes `.next/static`, so an image that
 forgets to copy it starts perfectly and serves an unstyled page.
 
-**The API image is still unbuilt, and the reason changed.** This was recorded as
-a TLS problem with the development environment's intercepting proxy. It was not,
-or not only. Injecting the proxy CA moved the failure twice, and each move found
-something real:
+**The API image builds.** It took three separate causes to get there, and only
+the first was environmental — the other two would have failed on any machine:
 
 1. `apk add python3 make g++` → _Permission denied_. The egress policy here does
    not allow Alpine's package repositories. Environmental, and it will not
@@ -230,9 +229,18 @@ something real:
    required on `bookworm-slim` too; that was tested, so the Alpine base is not
    the cause and switching bases would not avoid it.
 
-So the API build now fails at exactly one step, and only in this sandbox. On a
-host that can reach `dl-cdn.alpinelinux.org` it should complete — but "should"
-is not "did", and it stays listed as unverified until someone watches it finish.
+4. And past _that_, on a runner with an ordinary network, the build reached its
+   final instruction and died on `pnpm deploy --prod --legacy`:
+   **`Unknown option: 'legacy'`**. `--legacy` belongs to pnpm 10, where `deploy`
+   was reworked to require `inject-workspace-packages`; this workspace pins
+   9.15.4. The comment beside it claimed the flag was _required_ for the v9
+   lockfile — exactly backwards. That was the last one.
+
+With the flag gone the image builds end to end in CI, and the job asserts it runs
+as `node` rather than root, because a build that produced a root-running image
+would still be a build that passed. What remains unverified is the image
+_running_: CI builds and inspects it, but nothing has yet started the container
+against a database.
 
 ## The deploy workflow
 

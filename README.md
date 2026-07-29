@@ -269,18 +269,18 @@ unthrottled documentation paths hiding in exactly that gap.
 
 ## Phase status
 
-| Phase                           | State                                                                                  |
-| ------------------------------- | -------------------------------------------------------------------------------------- |
-| 1. Foundation + frozen contract | done                                                                                   |
-| 2. Domain engine + rules policy | done — reviewed, 116 tests                                                             |
-| 3. Auth + API                   | done — reviewed, 379 tests                                                             |
-| 4. MongoDB persistence          | done — 64 integration tests on real mongod                                             |
-| 5. Next.js client               | done — reviewed, 72 tests                                                              |
-| 6. Docker + CI/CD               | image, Fly config and deploy workflow written; **image never built, nothing deployed** |
-| 7. Browser end-to-end           | done — 5 scenarios, deterministic dice                                                 |
-| 8. Security hardening           | done inline; three gaps named in [docs/security.md](docs/security.md)                  |
-| 9. Documentation                | done                                                                                   |
-| 10. Final audit                 | done — [final validation report](docs/final-validation-report.md): **PARTIAL PASS**    |
+| Phase                           | State                                                                               |
+| ------------------------------- | ----------------------------------------------------------------------------------- |
+| 1. Foundation + frozen contract | done                                                                                |
+| 2. Domain engine + rules policy | done — reviewed, 116 tests                                                          |
+| 3. Auth + API                   | done — reviewed, 379 tests                                                          |
+| 4. MongoDB persistence          | done — 64 integration tests on real mongod                                          |
+| 5. Next.js client               | done — reviewed, 72 tests                                                           |
+| 6. Docker + CI/CD               | both images build in CI; **nothing deployed** — no host, no credentials             |
+| 7. Browser end-to-end           | done — 5 scenarios, deterministic dice                                              |
+| 8. Security hardening           | done inline; three gaps named in [docs/security.md](docs/security.md)               |
+| 9. Documentation                | done                                                                                |
+| 10. Final audit                 | done — [final validation report](docs/final-validation-report.md): **PARTIAL PASS** |
 
 Working conventions, invariants and the gotchas that produced them:
 [AGENTS.md](AGENTS.md).

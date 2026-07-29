@@ -25,11 +25,11 @@ than scripted ones. No Critical or High security findings (§5).
 **The verdict is PARTIAL rather than PASS because the project is not
 deliverable, and one failure is unexplained:**
 
-- **The API container image has never been built successfully.** Not once, in
-  this environment or any other. The Dockerfile is committed, referenced by CI
-  and by the deploy workflow, and is entirely unverified. _(The cause given here
-  originally — the sandbox's TLS proxy — turned out to be hiding a real defect.
-  See the addendum to §6; the conclusion is unchanged.)_
+- ~~**The API container image has never been built successfully.**~~ **Closed.**
+  It builds end to end in CI, and the job asserts the image runs as `node`. It
+  took three causes to get there and only the first was environmental — see the
+  addendum to §6. What is still unverified is the image _running_: nothing has
+  started the container against a database.
 - **Nothing is deployed.** No Fly app, no Vercel project, no Atlas cluster, no
   live URL. The deploy workflow, its rollback path, and the Fly health gate have
   never executed.
@@ -40,8 +40,8 @@ deliverable, and one failure is unexplained:**
   has not recurred in 28 subsequent runs and no mechanism has been found. An
   unexplained failure is not a passed test.
 
-A verdict of PASS would require asserting that a never-built image and an
-unexercised deployment path work. They may well. Nobody knows.
+A verdict of PASS would require asserting that an unexercised deployment path
+works. It may well. Nobody has watched it.
 
 **Two defects were found by this audit and fixed, both recorded here rather than
 quietly closed:**
@@ -294,7 +294,27 @@ four of its gaps, and turned one of them into a defect worth naming.
 - **Gap 9 is closed.** The ten `wip(...)` commits were squashed; history is 41
   commits with none of them announcing a broken tree. The tree was verified
   byte-identical before and after the rewrite.
-- **Gap 1 changed cause, and the real one was a defect.** "The image has never
+- **Gap 1 is closed: the API image builds.** Three causes, found by pushing past
+  each one:
+
+  1. `apk add python3 make g++` → _Permission denied_, this sandbox's egress
+     policy refusing Alpine's repositories. Environmental, and the only one of
+     the three that was.
+  2. `corepack enable && pnpm install` → **`Cannot find matching keyid`**. npm
+     rotated its package signing key and the old one expired 2025-01-29, so
+     every Node image published before the rotation ships a corepack that cannot
+     verify the current pnpm tarball. This would have failed on any machine on
+     earth. Both Dockerfiles now install pnpm with npm at the version
+     `packageManager` pins.
+  3. `pnpm deploy --prod --legacy` → **`Unknown option: 'legacy'`**, on the
+     build's final instruction. `--legacy` belongs to pnpm 10; this workspace
+     pins 9.15.4, and the comment beside the flag claimed it was _required_ for
+     the v9 lockfile. Exactly backwards.
+
+  CI now builds the image and asserts it runs as `node`. The container has still
+  never been _started_, which is a different claim and is not made here.
+
+- **The original diagnosis of gap 1 was wrong, and that is the lesson.** "The image has never
   been built" was attributed to this environment's TLS-intercepting proxy.
   Injecting the proxy CA moved the failure past that and exposed
   **`Cannot find matching keyid`** from corepack — which is not environmental
